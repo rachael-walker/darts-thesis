@@ -18,7 +18,7 @@ from scipy.stats import multivariate_normal
 import function_board as fb
 import function_tool as ft
 
-def evaluate_score_probability(playerID_list,error_multiplier=1):    
+def evaluate_score_probability(playerID_list,epsilon=1):    
     """
     Players' fitted skill models are contained in ALL_Model_Fits.mat.
     A dart throw landing follows a bivariate Gaussian distribution with the mean(center) as the aiming location and the covariance matrix given in the fitted model. 
@@ -99,7 +99,7 @@ def evaluate_score_probability(playerID_list,error_multiplier=1):
     ## 
     for playerID in playerID_list:
         name_pa = 'player{}'.format(playerID)
-        result_filename = result_dir + '/' + '{}_gaussin_prob_grid.pkl'.format(name_pa)
+        result_filename = result_dir + '/' + 'e{}_'.format(epsilon) + '{}_gaussin_prob_grid.pkl'.format(name_pa)
         print('\ncomputing {}'.format(result_filename))
 
         ## new result grid    
@@ -150,17 +150,17 @@ def evaluate_score_probability(playerID_list,error_multiplier=1):
                     mu = [xgrid[xi], ygrid[yi]]
                     score, multiplier = fb.get_score_and_multiplier(mu)
                     if (score==60 and multiplier==3): ##triple 20
-                        covariance_matrix = player_parameter['ModelFit_T20'][0, player_index][2] * error_multiplier
+                        covariance_matrix = player_parameter['ModelFit_T20'][0, player_index][2] * epsilon
                     elif (score==57 and multiplier==3): ##triple 19
-                        covariance_matrix = player_parameter['ModelFit_T19'][0, player_index][2] * error_multiplier
+                        covariance_matrix = player_parameter['ModelFit_T19'][0, player_index][2] * epsilon
                     elif (score==54 and multiplier==3): ##triple 18
-                        covariance_matrix = player_parameter['ModelFit_T18'][0, player_index][2] * error_multiplier
+                        covariance_matrix = player_parameter['ModelFit_T18'][0, player_index][2] * epsilon
                     elif (score==51 and multiplier==3): ##triple 17
-                        covariance_matrix = player_parameter['ModelFit_T17'][0, player_index][2] * error_multiplier
+                        covariance_matrix = player_parameter['ModelFit_T17'][0, player_index][2] * epsilon
                     elif (score==50 and multiplier==2): ##double bull
-                        covariance_matrix = player_parameter['ModelFit_B50'][0, player_index][2] * error_multiplier
+                        covariance_matrix = player_parameter['ModelFit_B50'][0, player_index][2] * epsilon
                     else:
-                        covariance_matrix = player_parameter['ModelFit_All_Doubles'][0, player_index][2] * error_multiplier
+                        covariance_matrix = player_parameter['ModelFit_All_Doubles'][0, player_index][2] * epsilon
                             
                     ## f_density_grid is the PDF of the fitted Gaussian distribution
                     rv = multivariate_normal(mu, covariance_matrix)

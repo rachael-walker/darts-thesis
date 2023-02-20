@@ -52,7 +52,7 @@ def load_prob_grid(playername_filename, data_parameter_dir=fb.data_parameter_dir
     """
     
     if playername_filename.startswith('player'):
-        filename = data_parameter_dir+'/grid_{}/{}_gaussin_prob_grid.pkl'.format(grid_version, playername_filename)
+        filename = data_parameter_dir+'/grid_{}/e1_{}_gaussin_prob_grid.pkl'.format(grid_version, playername_filename)
     else:    
         filename = playername_filename        
     
