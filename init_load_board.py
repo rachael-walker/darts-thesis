@@ -1,5 +1,6 @@
 import math
 import numpy as np 
+from matplotlib import pyplot as plt
 
 #---------------------------------------------------------------------------------------------
 ############################## ---- Main Board Dimensions ---- ###############################
@@ -75,3 +76,82 @@ board_region_distances['SB'] = {'m':r_sb_middle}
 
 r_db_middle = 0 
 board_region_distances['DB'] = {'m':r_db_middle}
+
+
+# Source https://www.pythonpool.com/matplotlib-circle/
+
+def plot_basic_board(figsize = (8,8),xlim=(-200,200),ylim=(-200,200)):
+
+  plt.rcParams["figure.figsize"] = figsize
+  
+  # list of angles for plotting circles
+  angle = np.linspace( 0 , 2 * np.pi , 150 ) 
+
+  # outer doubles circle  
+  r_do = 170
+  x_do = r_do * np.cos( angle ) 
+  y_do = r_do * np.sin( angle ) 
+
+  # inner doubles circle
+  r_di = 162
+  x_di = r_di * np.cos( angle ) 
+  y_di = r_di * np.sin( angle ) 
+
+  # outer triples circle
+  r_to = 107
+  x_to = r_to * np.cos( angle ) 
+  y_to = r_to * np.sin( angle ) 
+
+  # inner triples circle
+  r_ti = 99
+  x_ti = r_ti * np.cos( angle ) 
+  y_ti = r_ti * np.sin( angle ) 
+
+  # single bullseye circle
+  r_sb = 15.9  
+  x_sb = r_sb * np.cos( angle ) 
+  y_sb = r_sb * np.sin( angle ) 
+
+  # double bullseye circle
+  r_db = 6.35
+  x_db = r_db * np.cos( angle ) 
+  y_db = r_db * np.sin( angle ) 
+
+  # radial line list 
+  x_line_list = []
+  y_line_list = []
+  for i in range(0,20):
+    x_line_list.append([r_sb*np.sin(math.radians(9+18*i)),r_do*np.sin(math.radians(9+18*i))])
+    y_line_list.append([r_sb*np.cos(math.radians(9+18*i)),r_do*np.cos(math.radians(9+18*i))])
+
+  # initialize plot
+  figure, axes = plt.subplots( 1 ) 
+  
+  # plot circles
+  axes.plot( x_do, y_do , 'k') 
+  axes.plot( x_di, y_di , 'k') 
+  axes.plot( x_to, y_to , 'k') 
+  axes.plot( x_ti, y_ti , 'k') 
+  axes.plot( x_sb, y_sb , 'k') 
+  axes.plot( x_db, y_db , 'k') 
+    
+  axes.set_aspect( 1 ) 
+
+  # plot lines
+  segment_vals = [20, 1, 18 , 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5]
+
+  for i in range(0,20):
+    
+    # plot line 
+    plt.plot(x_line_list[i], y_line_list[i], 'k')   
+    
+    # plot label 
+    coords = ((r_do+8)*np.sin(math.radians(18*i)), (r_do+8)*np.cos(math.radians(18*i)))                                 
+    axes.annotate('%d' % segment_vals[i], xy=coords, textcoords='data') 
+
+  # plt.xlim(-200,200)
+  # plt.ylim(-200,200)
+  plt.xlim(xlim)
+  plt.ylim(ylim)
+
+  return figure, axes
