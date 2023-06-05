@@ -389,12 +389,12 @@ def get_aiming_grid_custom_no_tokens(playername_filename, epsilon=1, data_parame
 
 #%%
 ## save custom action set with no tokens
-def save_aiming_grid_custom_no_tokens(playerID_list, epsilon=1):    
+def save_aiming_grid_custom_no_tokens(playerID_list, epsilon=1,grid_version='full'):    
     grid_version_result = 'custom_no_tokens'
     print('generate and save action set grid_version={}'.format(grid_version_result))
     for playerID in playerID_list:
         name_pa = 'player{}'.format(playerID)    
-        [aiming_grid, prob_grid_normalscore, prob_grid_singlescore, prob_grid_doublescore, prob_grid_triplescore, prob_grid_bullscore] = get_aiming_grid_custom_no_tokens(name_pa, epsilon=epsilon, data_parameter_dir=fb.data_parameter_dir, grid_version='full')
+        [aiming_grid, prob_grid_normalscore, prob_grid_singlescore, prob_grid_doublescore, prob_grid_triplescore, prob_grid_bullscore] = get_aiming_grid_custom_no_tokens(name_pa, epsilon=epsilon, data_parameter_dir=fb.data_parameter_dir, grid_version=grid_version)
         
         postfix = ''
         info = 'SB={} DB={} R1={} postfix={} skillmodel=full grid_version={}'.format(fb.score_SB, fb.score_DB, fb.R1, postfix, grid_version_result)
@@ -548,6 +548,5 @@ def solve_dp_noturn_tokens(aiming_grid, prob_grid_normalscore, prob_grid_normals
                 optimal_action_index[t,score_state] = num_tothrow.argmin()
         
     return [optimal_value, optimal_action_index]
-
 
 

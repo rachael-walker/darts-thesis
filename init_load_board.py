@@ -80,7 +80,7 @@ board_region_distances['DB'] = {'m':r_db_middle}
 
 # Source https://www.pythonpool.com/matplotlib-circle/
 
-def plot_basic_board(figsize = (8,8),xlim=(-200,200),ylim=(-200,200)):
+def plot_basic_board(figsize = (8,8),xlim=(-200,200),ylim=(-200,200),axes=None):
 
   plt.rcParams["figure.figsize"] = figsize
   
@@ -125,7 +125,10 @@ def plot_basic_board(figsize = (8,8),xlim=(-200,200),ylim=(-200,200)):
     y_line_list.append([r_sb*np.cos(math.radians(9+18*i)),r_do*np.cos(math.radians(9+18*i))])
 
   # initialize plot
-  figure, axes = plt.subplots( 1 ) 
+  #figure, axes = plt.subplots( 1 ) 
+
+  if axes == None:
+        axes = plt.gca()
   
   # plot circles
   axes.plot( x_do, y_do , 'k') 
@@ -143,15 +146,28 @@ def plot_basic_board(figsize = (8,8),xlim=(-200,200),ylim=(-200,200)):
   for i in range(0,20):
     
     # plot line 
-    plt.plot(x_line_list[i], y_line_list[i], 'k')   
+    axes.plot(x_line_list[i], y_line_list[i], 'k')   
     
     # plot label 
-    coords = ((r_do+8)*np.sin(math.radians(18*i)), (r_do+8)*np.cos(math.radians(18*i)))                                 
-    axes.annotate('%d' % segment_vals[i], xy=coords, textcoords='data') 
+    coords = ((r_do*1.1)*np.sin(math.radians(18*i)), (r_do*1.1)*np.cos(math.radians(18*i)))                                 
+    axes.annotate('%d' % segment_vals[i], xy=coords, textcoords='data',ha='center',va='center') 
 
   # plt.xlim(-200,200)
   # plt.ylim(-200,200)
-  plt.xlim(xlim)
-  plt.ylim(ylim)
+  axes.set_xlim(xlim)
+  axes.set_ylim(ylim)
 
-  return figure, axes
+  axes.tick_params(
+      axis='x',          # changes apply to the x-axis
+      which='both',      # both major and minor ticks are affected
+      bottom=False,      # ticks along the bottom edge are off
+      top=False,         # ticks along the top edge are off
+      labelbottom=False) # labels along the bottom edge are off
+  axes.tick_params(
+      axis='y',          # changes apply to the x-axis
+      which='both',      # both major and minor ticks are affected
+      left=False,      # ticks along the bottom edge are off
+      right=False,         # ticks along the top edge are off
+      labelleft=False) # labels along the bottom edge are off
+
+  return axes

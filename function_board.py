@@ -256,6 +256,80 @@ def get_score_singleonly(x, y):
     # if we got here, it must be a double
     return 0
 
+## input:  location (x,y)
+## output: return score if (x,y) is in the single area, otherwise 0 
+def get_score_inner_singleonly(x, y):
+    # compute the radius
+    r = math.sqrt(x*x + y*y)
+
+    # check if it's off the board (do this for speed)
+    if (r > R):
+        return 0
+        
+    # check for a double and single bullseye
+    if (r <= R2):
+        return 0
+	
+    # get the angle
+    th = math.atan2(y, x)
+    phi = (math.pi/2+math.pi/20-th) % (2*math.pi)
+    if (phi < 0):
+        phi += 2*math.pi
+    
+    # now get the number
+    i = (int)(phi/(2*math.pi)*20)
+    if (i < 0):
+        i = 0
+    if (i >= 19):
+        i = 19
+    
+    n = d[i]
+
+    # check for a single
+    if (r <= R3):
+        return n
+    
+    return 0
+
+## input:  location (x,y)
+## output: return score if (x,y) is in the single area, otherwise 0 
+def get_score_outer_singleonly(x, y):
+    # compute the radius
+    r = math.sqrt(x*x + y*y)
+
+    # check if it's off the board (do this for speed)
+    if (r > R):
+        return 0
+        
+    # check for a double and single bullseye
+    if (r <= R2):
+        return 0
+	
+    # get the angle
+    th = math.atan2(y, x)
+    phi = (math.pi/2+math.pi/20-th) % (2*math.pi)
+    if (phi < 0):
+        phi += 2*math.pi
+    
+    # now get the number
+    i = (int)(phi/(2*math.pi)*20)
+    if (i < 0):
+        i = 0
+    if (i >= 19):
+        i = 19
+    
+    n = d[i]
+
+    # check for a triple or inner single
+    if (r <= R4):
+        return 0
+	
+    # check for an outer single
+    if (r <= R5):
+        return n
+	
+    # if we got here, it must be a double
+    return 0
 	
 ## input:  location (x,y)
 ## output: return score if (x,y) is in the double ring, otherwise 0 
