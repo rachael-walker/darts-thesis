@@ -12,6 +12,15 @@ import function_tool as ft
 import init_load_board as ib
 import init_simple_mdp as imdp
 
+import numpy as np
+np.set_printoptions(precision=4)
+np.set_printoptions(linewidth=300)
+np.set_printoptions(threshold=300)
+
+import torch
+torch.set_printoptions(precision=4)
+torch.set_printoptions(linewidth=300)
+torch.set_printoptions(threshold=300)
 
 R = fb.R ## radius of the dartboard 170
 grid_num = fb.grid_num ## 341
@@ -418,6 +427,210 @@ def save_aiming_grid_custom_no_tokens(playerID_list, epsilon=1,grid_version='ful
     return
 
 
+def init_data_structures():
+    optimal_value_rt3 = np.zeros(502) #vector: optimal value for the beginning state of each turn (rt=3)
+    optimal_value_dic = {} ## first key: score=0,2,...,501, second key: remaining throws=3,2,1
+    optimal_action_index_dic = {}
+    num_iteration_record = np.zeros(502, dtype=np.int32)
+    
+    state_len_vector = np.zeros(4, dtype=np.int32)
+    state_value  = [None]  ## optimal value (expected # of turns to finish the game) for each state in the current playing turn
+    state_action = [None]  ## aimming locations for for each state in the current playing turn
+    action_diff  = [None]
+    value_relerror = np.zeros(4)
+    for rt in [1,2,3]:
+        ## for rt=3: possible score_gained = 0
+        ## for rt=2: possible score_gained = 0,1,...,60
+        ## for rt=1: possible score_gained = 0,1,...,120
+        this_throw_state_len = fb.maxhitscore*(3-rt) + 1
+        state_value.append(np.ones(this_throw_state_len)*fb.largenumber)
+        state_action.append(np.ones(this_throw_state_len, np.int32)*fb.infeasible_marker)
+        action_diff.append(np.ones(this_throw_state_len))
+    state_value_update = ft.copy_numberarray_container(state_value)
+    state_action_update = ft.copy_numberarray_container(state_action)
+
+    return optimal_value_rt3, optimal_value_dic, optimal_action_index_dic, num_iteration_record, state_len_vector, state_value, state_action, action_diff, value_relerror, state_value_update, state_action_update
+
+def init_probabilities( aiming_grid, prob_grid_normalscore_nt, prob_grid_doublescore_nt, prob_grid_bullscore_nt, prob_grid_normalscore_t, prob_grid_doublescore_t, prob_grid_bullscore_t):
+    
+    # aiming grid
+    num_aiming_location = aiming_grid.shape[0]
+    prob_normalscore_nt = prob_grid_normalscore_nt
+    prob_normalscore_t = prob_grid_normalscore_t
+    prob_doublescore_dic_nt = {}
+    prob_doublescore_dic_t = {}
+    for doublescore_index in range(20):
+        doublescore = 2*(doublescore_index+1)
+        prob_doublescore_dic_nt[doublescore] = np.array(prob_grid_doublescore_nt[:,doublescore_index])
+        prob_doublescore_dic_t[doublescore] = np.array(prob_grid_doublescore_t[:,doublescore_index])
+    prob_DB_nt = np.array(prob_grid_bullscore_nt[:,1])
+    prob_DB_t = np.array(prob_grid_bullscore_t[:,1])
+
+    ## the probability of not bust for each action given score_max=i (score_remain=i+2)
+    prob_bust_dic_nt = {}
+    prob_notbust_dic_nt = {}
+    prob_bust_dic_t = {}
+    prob_notbust_dic_t = {}
+    for score_max in range(60):    
+        ## transit to next throw or turn
+        prob_notbust_nt = prob_grid_normalscore_nt[:,0:score_max+1].sum(axis=1)
+        prob_notbust_t = prob_grid_normalscore_t[:,0:score_max+1].sum(axis=1)
+        ## transit to the end of game
+        score_remain = score_max + 2
+        if (score_remain == fb.score_DB):
+            prob_notbust_nt += prob_DB_nt
+            prob_notbust_t += prob_DB_t
+        elif (score_remain <= 40 and score_remain%2==0):
+            prob_notbust_nt += prob_doublescore_dic_nt[score_remain]
+            prob_notbust_t += prob_doublescore_dic_t[score_remain]
+        ##
+        prob_notbust_nt = np.minimum(np.maximum(prob_notbust_nt, 0),1)
+        prob_notbust_dic_nt[score_max] = prob_notbust_nt
+        prob_bust_dic_nt[score_max] = 1 - prob_notbust_dic_nt[score_max]
+        prob_notbust_t = np.minimum(np.maximum(prob_notbust_t, 0),1)
+        prob_notbust_dic_t[score_max] = prob_notbust_t
+        prob_bust_dic_t[score_max] = 1 - prob_notbust_dic_t[score_max]
+    
+    return num_aiming_location, prob_normalscore_nt, prob_doublescore_dic_nt, prob_DB_nt, prob_bust_dic_nt, prob_notbust_dic_nt, prob_normalscore_t, prob_doublescore_dic_t, prob_DB_t, prob_bust_dic_t, prob_notbust_dic_t
+
+
+def solve_turn_transit_probability_fast_token(score_state, state_action, available_tokens, prob_grid_normalscore_nt, prob_grid_doublescore_nt, prob_grid_bullscore_nt, prob_bust_dic_nt,prob_grid_normalscore_t, prob_grid_doublescore_t, prob_grid_bullscore_t, prob_bust_dic_t):
+
+    parent_probability = np.ones((1,1))
+
+    # Establish number of tokens that must be considered in turn  
+    max_tokens_in_turn = min(available_tokens,3) # either 3 (use token for every throw in turn) or the total number of available tokens if < 3 
+    max_tokens_plus_one = max_tokens_in_turn + 1 # used for indexing purposes
+
+    # Initialize data structures to store final probabilities
+    result_dict = {}
+    result_dict['finish'] = 0 # probability of finishing the game
+    result_dict['bust'] = np.zeros(max_tokens_plus_one) # probability of going bust while using n tokens
+    prob_transit_len = min(score_state-2, fb.maxhitscore*(3)) + 1 # length of feasible transition array 
+    result_dict['score'] = np.zeros((max_tokens_plus_one,prob_transit_len)) # matrix of TPs; prob of transitioning to [t,s] where t is tokens used and s is score state
+
+
+    for rt in [3,2,1]:
+
+        # Max score gained in turn; bounded by score state if you can go bust. Otherwise will be 60,120,180 for rt=3,2,1 respectively. 
+        max_score_gained = min(score_state-2, fb.maxhitscore*(4-rt))
+
+        # Add a one for indexing purposes 
+        max_score_gained_index = max_score_gained + 1
+
+        # Max score gained by throw 
+        max_throw_score = min(score_state-2, fb.maxhitscore)
+        max_throw_score_index = max_throw_score + 1
+
+        # Token sizing 
+        token_index = min(available_tokens,4-rt) + 1
+
+        # Initialize child probability object which will contain each state that can be transitioned to, with value equal to transition prob
+        child_probability = np.zeros((token_index,max_score_gained_index))
+
+        # this fills in the parent probability 
+        #prob_normalscore_transit = prob_normalscore[state_action[rt][0:this_throw_state_len]]*prob_this_throw_state.reshape((this_throw_state_len,1))
+        
+        for tokens_used in range(parent_probability.shape[0]):
+
+            for score_gained in range(parent_probability.shape[1]):
+
+                ## skip infeasible state
+                if not fb.state_feasible_array[rt, score_gained]:
+                    continue   
+
+                ## skip if zero probability of being in parent state in the first place to save time
+                if parent_probability[tokens_used][score_gained] < 0.000000000000001:
+                    continue 
+
+                ## get policy action at this state
+                remaining_tokens = available_tokens-tokens_used
+                action_index = state_action[rt][remaining_tokens][score_gained]
+                is_token = (action_index >= imdp.throw_num)
+                bool_token = 1 if is_token else 0 
+
+                if ((is_token)&((max_tokens_in_turn-tokens_used)>0)): 
+                    prob_normalscore = prob_grid_normalscore_t
+                    prob_bullscore = prob_grid_bullscore_t
+                    prob_doublescore = prob_grid_doublescore_t
+                    prob_bust_dic = prob_bust_dic_t
+                else: 
+                    prob_normalscore = prob_grid_normalscore_nt
+                    prob_bullscore = prob_grid_bullscore_nt
+                    prob_doublescore = prob_grid_doublescore_nt
+                    prob_bust_dic = prob_bust_dic_nt
+
+                # Probabilitiy of being in this state of the turn (i.e. specific number of tokens used and score gained) given policy
+                prob_this_state = parent_probability[tokens_used][score_gained]
+
+                # Probability of every outcome of current throw (2x61); either 0 or 1 tokens used, score_gained of 0 to 60
+                throw_transit_probability = np.zeros((min(remaining_tokens+1,2),max_throw_score_index))
+
+                # Add transition probabilities depending on whether a token was used or not; multiply by probability of this state 
+                if available_tokens ==0: 
+                    throw_transit_probability += prob_normalscore[action_index][:max_throw_score_index] * prob_this_state 
+                else: 
+                    throw_transit_probability[bool_token] += prob_normalscore[action_index][:max_throw_score_index] * prob_this_state 
+
+                # Get the largest score that can be made without busting 
+                score_remain = score_state - score_gained
+                score_max = min(score_remain-2, 60)
+                score_max_plus1 = score_max + 1
+            
+                ## Transit to next throw or turn with normal scores    
+                if available_tokens ==0: 
+                    child_probability[0,score_gained:score_gained+score_max_plus1] += throw_transit_probability[0,0:score_max_plus1]
+                else:    
+                    child_probability[tokens_used:tokens_used+2,score_gained:score_gained+score_max_plus1] += throw_transit_probability[:,0:score_max_plus1]
+                
+                ## game can not bust or end when score_max = 60, i.e.,  prob_notbust = 1
+                if (score_max < 60):
+                    ## transit to the end of game
+                    if (score_remain == fb.score_DB):
+                        result_dict['finish'] += prob_bullscore[action_index, 1]*prob_this_state
+                    elif (score_remain <= 40 and score_remain%2==0):
+                        doublescore_index = (score_remain//2) - 1
+                        result_dict['finish'] += prob_doublescore[action_index, doublescore_index]*prob_this_state
+                    else:
+                        pass
+
+                    #transit to bust
+                    result_dict['bust'][tokens_used+bool_token] += prob_bust_dic[score_max][action_index]*prob_this_state
+
+        parent_probability = child_probability
+        #print(parent_probability)
+
+    result_dict['score'] = parent_probability
+
+    return result_dict
+
+def solve_policy_transit_probability(tokens,policy_action_index_dic, prob_grid_normalscore_nt, prob_grid_doublescore_nt, prob_grid_bullscore_nt, prob_bust_dic_nt,prob_grid_normalscore_t, prob_grid_doublescore_t, prob_grid_bullscore_t, prob_bust_dic_t):
+    """
+    For each turn, solve the state transition probability for a specified aiming policy
+    
+    Args: 
+        policy_action_index_dic: a dict of aiming locations (actions in the policy) for each state (s,i,u) of each turn s=2,...,501
+        prob_normalscore, prob_doublescore, prob_bullscore: the skill model 
+    
+    Returns: A dict
+    """  
+    
+    prob_policy_transit_dict = {}
+    t1 = time.time()
+
+    for tok in range(0,tokens+1):
+        
+        prob_policy_transit_dict[tok] = {}
+
+        for score_state in range(2,502):
+
+            prob_policy_transit_dict[tok][score_state] = solve_turn_transit_probability_fast_token(score_state, policy_action_index_dic[score_state], tok, prob_grid_normalscore_nt, prob_grid_doublescore_nt, prob_grid_bullscore_nt, prob_bust_dic_nt,prob_grid_normalscore_t, prob_grid_doublescore_t, prob_grid_bullscore_t, prob_bust_dic_t)
+            #prob_policy_transit_dict[score_state] = solve_turn_transit_probability(score_state, policy_action_index_dic[score_state], prob_grid_normalscore, prob_grid_doublescore, prob_grid_bullscore)
+
+    t2 = time.time()
+    print('solve prob_policy_transit in {} seconds'.format(t2-t1))
+    
+    return prob_policy_transit_dict
 
 #%%
 ## single player game without the turn feature
@@ -526,7 +739,7 @@ def solve_dp_noturn_tokens(aiming_grid, prob_grid_normalscore, prob_grid_normals
                 num_tothrow+= prob_normalscore_1tosmax_dic[score_max].dot(optimal_value[t,score_state-1:score_state-score_max-1:-1])
                 # tp_t * v_nt <-- use token 
                 num_tothrow+= prob_normalscore_1tosmax_dic_t[score_max].dot(optimal_value[t-1,score_state-1:score_state-score_max-1:-1])
-                
+
                 ## probability of transition to state other than s itself
                 prob_otherstate = prob_normalscore_1tosmaxsum_dic[score_max] + prob_normalscore_1tosmaxsum_dic_t[score_max]
                 
@@ -549,4 +762,479 @@ def solve_dp_noturn_tokens(aiming_grid, prob_grid_normalscore, prob_grid_normals
         
     return [optimal_value, optimal_action_index]
 
+
+def solve_dp_turn_tokens(tokens, aiming_grid, prob_grid_normalscore_nt, prob_grid_singlescore_nt, prob_grid_doublescore_nt, prob_grid_triplescore_nt, prob_grid_bullscore_nt,prob_grid_normalscore_t, prob_grid_singlescore_t, prob_grid_doublescore_t, prob_grid_triplescore_t, prob_grid_bullscore_t):
+
+    tokens_plus_one = tokens + 1
+
+    ## Initialize probability objects
+    num_aiming_location, prob_normalscore_nt, prob_doublescore_dic_nt, prob_DB_nt, prob_bust_dic_nt, prob_notbust_dic_nt, prob_normalscore_t, prob_doublescore_dic_t, prob_DB_t, prob_bust_dic_t, prob_notbust_dic_t = init_probabilities( aiming_grid, prob_grid_normalscore_nt, prob_grid_doublescore_nt, prob_grid_bullscore_nt, prob_grid_normalscore_t, prob_grid_doublescore_t, prob_grid_bullscore_t)    
+
+    # Combined probabilities  
+    prob_grid_normalscore_comb = np.zeros(prob_grid_normalscore_t.shape)
+    prob_grid_normalscore_comb[:imdp.throw_num,:] = prob_grid_normalscore_nt[:imdp.throw_num,:]
+    prob_grid_normalscore_comb[imdp.throw_num:] = prob_grid_normalscore_t[imdp.throw_num:]
+
+    prob_grid_doublescore_comb = np.zeros(prob_grid_doublescore_t.shape)
+    prob_grid_doublescore_comb[:imdp.throw_num,:] = prob_grid_doublescore_nt[:imdp.throw_num,:]
+    prob_grid_doublescore_comb[imdp.throw_num:] = prob_grid_doublescore_t[imdp.throw_num:]
+
+    prob_grid_bullscore_comb = np.zeros(prob_grid_bullscore_t.shape)
+    prob_grid_bullscore_comb[:imdp.throw_num,:] = prob_grid_bullscore_nt[:imdp.throw_num,:]
+    prob_grid_bullscore_comb[imdp.throw_num:] = prob_grid_bullscore_t[imdp.throw_num:]
+
+    # Initialize joint probability notbust dictionary 
+    prob_notbust_dic = {}
+    for score_max in prob_notbust_dic_t.keys():
+        prob_notbust_dic[score_max] = np.zeros(prob_notbust_dic_t[0].shape[0]) # 791 
+        prob_notbust_dic[score_max][:imdp.throw_num] += prob_notbust_dic_nt[score_max][:imdp.throw_num] 
+        prob_notbust_dic[score_max][imdp.throw_num:] += prob_notbust_dic_t[score_max][imdp.throw_num:]
+
+    # Intialize joint probability bust dictionary 
+    prob_bust_dic = {}
+    for score_max in prob_notbust_dic_t.keys():
+        prob_bust_dic[score_max] = np.zeros(prob_bust_dic_t[0].shape[0]) # 791 
+        prob_bust_dic[score_max][:imdp.throw_num] += prob_bust_dic_nt[score_max][:imdp.throw_num] 
+        prob_bust_dic[score_max][imdp.throw_num:] += prob_bust_dic_t[score_max][imdp.throw_num:]
+
+
+    prob_normalscore_tensor_nt = torch.from_numpy(prob_normalscore_nt)
+    prob_normalscore_tensor_t = torch.from_numpy(prob_normalscore_t)
+    prob_normalscore_tensor = torch.from_numpy(prob_grid_normalscore_comb)
+
+    # prob_doublescore_dic = prob_doublescore_dic_nt
+    # prob_DB = prob_DB_nt
+    # prob_bust_dic = prob_bust_dic_nt
+    # prob_notbust_dic = prob_notbust_dic_nt
+
+    iteration_round_limit = 20
+
+    optimal_value_rt3 = np.zeros((tokens_plus_one,502)) #vector: optimal value for the beginning state of each turn (rt=3)
+    optimal_value_dic = {} ## first key: score=0,2,...,501, second key: remaining throws=3,2,1
+    optimal_action_index_dic = {}
+    num_iteration_record = np.zeros(502, dtype=np.int32)
+
+    state_len_vector = np.zeros(4, dtype=np.int32)
+    state_value  = [None]  ## optimal value (expected # of turns to finish the game) for each state in the current playing turn
+    state_action = [None]  ## aimming locations for for each state in the current playing turn
+    action_diff  = [None]
+    value_relerror = np.zeros(4)
+
+    for rt in [1,2,3]:
+        ## for rt=3: possible score_gained = 0
+        ## for rt=2: possible score_gained = 0,1,...,60
+        ## for rt=1: possible score_gained = 0,1,...,120
+        this_throw_state_len = fb.maxhitscore*(3-rt) + 1
+        state_value.append(np.ones((tokens_plus_one,this_throw_state_len))*fb.largenumber)
+        state_action.append(np.ones((tokens_plus_one,this_throw_state_len), np.int32)*fb.infeasible_marker)
+        action_diff.append(np.ones((tokens_plus_one,this_throw_state_len)))
+    state_value_update = ft.copy_numberarray_container(state_value)
+    state_action_update = ft.copy_numberarray_container(state_action)
+
+    ## use no_turn policy as the initial policy
+    #[noturn_optimal_value, noturn_optimal_action_index] = solve_dp_noturn(aiming_grid, prob_grid_normalscore, prob_grid_doublescore, prob_grid_bullscore)
+    [noturn_optimal_value, noturn_optimal_action_index] = solve_dp_noturn_tokens(aiming_grid, prob_grid_normalscore_nt, prob_grid_normalscore_t, tokens = tokens, prob_grid_doublescore=prob_grid_doublescore_nt, prob_grid_bullscore=prob_grid_bullscore_nt, prob_grid_doublescore_dic=None, prob_grid_doublescore_t=prob_grid_doublescore_t, prob_grid_bullscore_t=prob_grid_bullscore_t, prob_grid_doublescore_dic_t=None)
+
+    t1 = time.time()
+    for score_state in range(2,502):
+
+        for tok in range(tokens_plus_one):
+            
+            ## initialization 
+            for rt in [1,2,3]:
+            
+                ## for rt=3: score_gained = 0
+                ## for rt=2: score_gained = 0,1,...,min(s-2,60)
+                ## for rt=1: score_gained = 0,1,...,min(s-2,120)
+                this_throw_state_len = min(score_state-2, fb.maxhitscore*(3-rt)) + 1
+                state_len_vector[rt] = this_throw_state_len
+                        
+                ## initialize the starting policy: 
+                ## use no_turn action in (s, i, u=0)
+                ## use turn action (s-1, i, u-1) in (s, i, u!=0) if (s-1, i, u-1) is feasible state
+                state_action[rt][tok][0] = noturn_optimal_action_index[tok][score_state]            
+                for score_gained in range(1,this_throw_state_len):                
+                    if fb.state_feasible_array[rt, score_gained]:  ## if True
+                        if fb.state_feasible_array[rt, score_gained-1]:
+                            state_action[rt][tok][score_gained] = optimal_action_index_dic[score_state-1][rt][tok][score_gained-1]
+                        else:                        
+                            state_action[rt][tok][score_gained] = noturn_optimal_action_index[tok][score_state-score_gained]
+                    else:
+                        state_action[rt][tok][score_gained] = fb.infeasible_marker
+        
+        # for tok in range(tokens_plus_one):
+
+            # policy iteration
+            for round_index in range(iteration_round_limit):
+
+                ## --------------------------------------------- ##
+                ##                 POLICY EVALUATION
+                ## --------------------------------------------- ##
+                rt = 3
+                score_gained = 0
+                score_max_turn = min(score_state-2, 3*fb.maxhitscore)
+
+                # Get the transit probabilities 
+                prob_turn_transit = solve_turn_transit_probability_fast_token(score_state, state_action, tok, prob_grid_normalscore_nt, prob_grid_doublescore_nt, prob_grid_bullscore_nt, prob_bust_dic_nt,prob_grid_normalscore_t, prob_grid_doublescore_t, prob_grid_bullscore_t, prob_bust_dic_t)
+                
+                tokens_max_turn = min(prob_turn_transit['bust'].shape[0]-1,tok)
+
+                # Make updates below 
+                prob_turn_zeroscore = prob_turn_transit['bust'][0] + prob_turn_transit['score'][0,0]
+
+                new_value_rt3 = 1 
+
+                # Don't use a token 
+                new_value_rt3 += np.dot(prob_turn_transit['score'][0,1:], optimal_value_rt3[tok,score_state-1:score_state-score_max_turn-1:-1])
+                
+                # Use at least one token 
+                if tok > 0: 
+
+                    # Go to subsequent score after using at least one token
+                    for i in range(0,tokens_max_turn):
+                        #new_value_rt3 += np.dot(prob_turn_transit['score'][0:tokens_max_turn+1,:][i], optimal_value_rt3[tok-tokens_max_turn:tok+1,score_state:score_state-score_max_turn-1:-1][i])
+
+                        new_value_rt3 += np.dot(np.flip(prob_turn_transit['score'][0:tokens_max_turn+1,:],axis=0)[i], optimal_value_rt3[tok-tokens_max_turn:tok+1,score_state:score_state-score_max_turn-1:-1][i])
+                
+                    # Go bust after using at least one token 
+                    new_value_rt3 += np.dot(np.flip(prob_turn_transit['bust'][1:tokens_max_turn+1]) , optimal_value_rt3[tok-tokens_max_turn+1:tok+1,score_state])
+
+                # Normalize over probability of moving to a new state 
+                new_value_rt3 = new_value_rt3 / (1-prob_turn_zeroscore)
+                new_value_rt3
+
+                state_value_update[rt][tok][score_gained] = new_value_rt3
+                optimal_value_rt3[tok][score_state] = new_value_rt3
+                #print('evaluate rt3 value= {}'.format(new_value_rt3)
+
+                ## --------------------------------------------- ##
+                ##                 POLICY IMPROVEMENT
+                ## --------------------------------------------- ## 
+
+                for rt in [1,2,3]: 
+
+                    this_throw_state_len = state_len_vector[rt]
+                    state_notbust_len =  max(min(score_state-61, this_throw_state_len),0)
+                    token_index = min(2,tok+1)
+
+                    ## CASE 1: state which can not bust.  score_state-score_gained>=62 
+                    if (state_notbust_len > 0):
+                        # One throw remaining and first round of iteration 
+                        if (rt==1 and round_index==0):
+                            ## combine all non-bust states together 
+                            state_notbust_update_index = state_notbust_len                    
+                            next_state_value_array_nt = np.zeros((61, state_notbust_len))   
+                            next_state_value_array_t = np.zeros((61, state_notbust_len))             
+                            for score_gained in range(state_notbust_len):
+                                ## skip infeasible state
+                                if not fb.state_feasible_array[rt, score_gained]:
+                                    continue
+                                score_remain = score_state - score_gained
+                                score_max = 60 ## always 60 here
+                                score_max_plus1 = score_max + 1
+
+                                new_state_vals_nt = optimal_value_rt3[tok]
+                                next_state_value_array_nt[:,score_gained] = new_state_vals_nt[score_remain:score_remain-score_max_plus1:-1]
+
+                                if tok > 0: 
+                                    new_state_vals_t = optimal_value_rt3[tok-1]
+                                    next_state_value_array_t[:,score_gained] = new_state_vals_t[score_remain:score_remain-score_max_plus1:-1]
+                                    
+                        # Two throws remaining and first round of iteration 
+                        elif (rt==2 and (round_index==0 or score_state<182)):
+                            ## combine all non-bust states together 
+                            state_notbust_update_index = state_notbust_len
+                            next_state_value_array_nt = np.zeros((61, state_notbust_len))      
+                            next_state_value_array_t = np.zeros((61, state_notbust_len))                      
+                            for score_gained in range(state_notbust_len):
+                                ## skip infeasible state
+                                if not fb.state_feasible_array[rt, score_gained]:
+                                    continue
+                                score_remain = score_state - score_gained
+                                score_max = 60 ## always 60 here
+                                score_max_plus1 = score_max + 1
+
+                                new_state_vals_nt = state_value_update[rt-1][tok]
+                                next_state_value_array_nt[:,score_gained] = new_state_vals_nt[score_gained:score_gained+score_max_plus1]
+
+                                if tok > 0: 
+                                    new_state_vals_t = state_value_update[rt-1][tok-1]
+                                    next_state_value_array_t[:,score_gained] = new_state_vals_t[score_gained:score_gained+score_max_plus1]
+
+                                    
+                        # Three throws remaining 
+                        # OR two throws remaining past first round of iteration and score state is greater than 182 
+                        # OR one throw remaining past first round of iteration  
+                        else: ##(rt==1 and round_index>0) or (rt==2 and round_index>0 and score_state>=182) or (rt==3)
+                            ## only update state of score_gained = 0
+                            state_notbust_update_index = 1
+                            next_state_value_array_nt= np.zeros((61))
+                            next_state_value_array_t= np.zeros((61))
+                            score_gained = 0
+                            score_remain = score_state - score_gained
+                            score_max = 60 ## always 60 here
+                            score_max_plus1 = score_max + 1                    
+                            ## make a copy
+                            if (rt > 1):
+
+                                new_state_vals_nt = state_value_update[rt-1][tok]
+                                next_state_value_array_nt[:] = new_state_vals_nt[score_gained:score_gained+score_max_plus1]
+                                
+                                if tok > 0:
+                                    new_state_vals_t = state_value_update[rt-1][tok-1]
+                                    next_state_value_array_t[:] = new_state_vals_t[score_gained:score_gained+score_max_plus1]
+
+                            ## transit to next turn when rt=1
+                            else:
+                                new_state_vals_nt = optimal_value_rt3[tok]
+                                next_state_value_array_nt[:] = new_state_vals_nt[score_remain:score_remain-score_max_plus1:-1]
+                                
+                                if tok > 0: 
+                                    new_state_vals_t = optimal_value_rt3[tok-1]
+                                    next_state_value_array_t[:] = new_state_vals_t[score_remain:score_remain-score_max_plus1:-1]
+                                    
+        
+                        ## matrix product to compute all together
+                        next_state_value_tensor_nt = torch.from_numpy(next_state_value_array_nt)
+                        next_state_value_tensor_t = torch.from_numpy(next_state_value_array_t)
+                        ## transit to next throw in the same turn when rt=3,2
+                        if (rt > 1): 
+
+                            # add one to indicate end of turn 
+                            try: 
+                                num_turns_tensor = torch.zeros((len(aiming_grid),next_state_value_array_nt.shape[1]))
+                            except:
+                                num_turns_tensor = torch.zeros(len(aiming_grid))
+                            
+                            # if we have tokens 
+                            if tok > 0:  
+
+                                # use no token probabilities for no token actions 
+                                num_turns_tensor[:imdp.throw_num] += prob_normalscore_tensor_nt[:imdp.throw_num].matmul(next_state_value_tensor_nt)
+                                # use token probabilities for token actions 
+                                num_turns_tensor[imdp.throw_num:len(aiming_grid)] += prob_normalscore_tensor_t[imdp.throw_num:].matmul(next_state_value_tensor_t)
+
+                            # if we don't have tokens   
+                            else:
+                                # add no token expectation --> index is 1 because we keep the same # of tokens       
+                                num_turns_tensor = prob_normalscore_tensor_nt.matmul(next_state_value_tensor_nt)
+                            
+                        ## transit to next turn when rt=1
+                        else:
+
+                            # add one to indicate end of turn 
+                            try: 
+                                num_turns_tensor = torch.ones((len(aiming_grid),next_state_value_array_nt.shape[1]))
+                            except:
+                                num_turns_tensor = torch.ones(len(aiming_grid))
+                        
+                            # if we have tokens 
+                            if tok > 0: 
+                                # use no token probabilities for no token actions
+                                num_turns_tensor[:imdp.throw_num] += prob_normalscore_tensor_nt[:imdp.throw_num].matmul(next_state_value_tensor_nt)
+                                
+                                # use token probabilities for token actions 
+                                num_turns_tensor[imdp.throw_num:] += prob_normalscore_tensor_t[imdp.throw_num:].matmul(next_state_value_tensor_t)
+                                #num_turns_tensor[imdp.throw_num:791] += prob_normalscore_tensor_t[imdp.throw_num:].matmul(next_state_value_tensor_t)
+                            else: 
+                                # add no token expectation  
+                                num_turns_tensor += prob_normalscore_tensor_nt.matmul(next_state_value_tensor_nt)
+
+                        ## searching
+                        #temp1 = num_turns_tensor.min(axis=0) 
+                        if tok == 0: 
+                            temp1 = num_turns_tensor[:imdp.throw_num].min(axis=0)
+                        else: 
+                            temp1 = num_turns_tensor.min(axis=0)               
+                        state_action_update[rt][tok][0:state_notbust_update_index] = temp1.indices.numpy()
+                        state_value_update[rt][tok][0:state_notbust_update_index] =  temp1.values.numpy() 
+
+                    ## CASE 2: state which possibly bust.  score_state-score_gained<62 
+                    if (state_notbust_len < this_throw_state_len):
+                        ## combine all bust states together 
+                        state_bust_len = this_throw_state_len - state_notbust_len
+                        next_state_value_array_nt = np.zeros((61, state_bust_len))
+                        next_state_value_array_t = np.zeros((61, state_bust_len))
+                        for score_gained in range(state_notbust_len, this_throw_state_len):
+                            ## skip infeasible state
+                            if not fb.state_feasible_array[rt, score_gained]:
+                                continue
+                            score_remain = score_state - score_gained
+                            #score_max = min(score_remain-2, 60)
+                            score_max = score_remain-2 ## less than 60 here
+                            score_max_plus1 = score_max + 1
+                            score_gained_index = score_gained - state_notbust_len ## index off set
+                            if (rt > 1):
+
+                                new_state_vals_nt = state_value_update[rt-1][tok]
+                                next_state_value_array_nt[0:score_max_plus1,score_gained_index] = new_state_vals_nt[score_gained:score_gained+score_max_plus1]
+
+                                if tok > 0: 
+                                    new_state_vals_t = state_value_update[rt-1][tok-1]
+                                    next_state_value_array_t[0:score_max_plus1,score_gained_index] = new_state_vals_t[score_gained:score_gained+score_max_plus1]
+
+                            ## transit to next turn when rt=1
+                            else:
+
+                                new_state_vals_nt = optimal_value_rt3[tok]
+                                next_state_value_array_nt[0:score_max_plus1,score_gained_index] = new_state_vals_nt[score_remain:score_remain-score_max_plus1:-1]
+
+                                
+                                if tok > 0: 
+                                    new_state_vals_t = optimal_value_rt3[tok-1]
+                                    next_state_value_array_t[0:score_max_plus1,score_gained_index] = new_state_vals_t[score_remain:score_remain-score_max_plus1:-1]
+                                    
+                        next_state_value_tensor_nt = torch.from_numpy(next_state_value_array_nt)
+                        next_state_value_tensor_t = torch.from_numpy(next_state_value_array_t)
+                        
+                        ## transit to next throw in the same turn when rt=3,2
+                        if (rt > 1):  
+
+                            # initialized
+                            try: 
+                                num_turns_tensor = torch.zeros((len(aiming_grid),next_state_value_array_nt.shape[1]))
+                            except:
+                                num_turns_tensor = torch.zeros(len(aiming_grid))
+                        
+                            # if we have tokens 
+                            if tok > 0: 
+                                # use no token probabilities for no token actions
+                                num_turns_tensor[:imdp.throw_num] += prob_normalscore_tensor_nt[:imdp.throw_num].matmul(next_state_value_tensor_nt)
+                                
+                                # use token probabilities for token actions 
+                                num_turns_tensor[imdp.throw_num:] += prob_normalscore_tensor_t[imdp.throw_num:].matmul(next_state_value_tensor_t)
+
+                                #num_turns_tensor[imdp.throw_num:791] += prob_normalscore_tensor_t[imdp.throw_num:].matmul(next_state_value_tensor_t)
+                            else: 
+                                # add no token expectation  
+                                num_turns_tensor += prob_normalscore_tensor_nt.matmul(next_state_value_tensor_nt)
+
+                                            
+                        ## transit to next turn when rt=1
+                        else:
+
+                            # add one to indicate end of turn 
+                            try: 
+                                num_turns_tensor = torch.ones((len(aiming_grid),next_state_value_array_nt.shape[1]))
+                            except:
+                                num_turns_tensor = torch.ones(len(aiming_grid))
+                        
+                            # if we have tokens 
+                            if tok > 0: 
+                                # use no token probabilities for no token actions
+                                num_turns_tensor[:imdp.throw_num] += prob_normalscore_tensor_nt[:imdp.throw_num].matmul(next_state_value_tensor_nt)
+                                
+                                # use token probabilities for token actions 
+                                num_turns_tensor[imdp.throw_num:] += prob_normalscore_tensor_t[imdp.throw_num:].matmul(next_state_value_tensor_t)
+
+                                #num_turns_tensor[imdp.throw_num:791] += prob_normalscore_tensor_t[imdp.throw_num:].matmul(next_state_value_tensor_t)
+                            else: 
+                                # add no token expectation  
+                                num_turns_tensor += prob_normalscore_tensor_nt.matmul(next_state_value_tensor_nt)
+
+                            # # add one to indicate end of turn 
+                            # num_turns_tensor = 1 
+                            # # add no token expectation  
+                            # num_turns_tensor += prob_normalscore_tensor_nt.matmul(next_state_value_tensor[0])
+                            
+                            # if tok > 0: 
+                            #     # add token expectation 
+                            #     num_turns_tensor += prob_normalscore_tensor_t.matmul(next_state_value_tensor[1])                                                             
+        
+                        ## consider bust/finishing for each bust state seperately 
+                        num_turns_array = num_turns_tensor.numpy() 
+                        ## for every score gained where you go bust                
+                        for score_gained in range(state_notbust_len, this_throw_state_len):
+                            ## skip infeasible state
+                            if not fb.state_feasible_array[rt, score_gained]:
+                                continue
+                            score_remain = score_state - score_gained
+                            #score_max = min(score_remain-2, 60)
+                            score_max = score_remain-2 ## less than 60 here
+                            score_max_plus1 = score_max + 1
+                            score_gained_index = score_gained - state_notbust_len
+                            
+                            ## transit to the end of game
+                            if (rt > 1):
+                                if (score_remain == fb.score_DB):                        
+                                    num_turns_array[:imdp.throw_num,score_gained_index] += prob_DB_nt[:imdp.throw_num]
+                                    num_turns_array[imdp.throw_num:,score_gained_index] += prob_DB_t[imdp.throw_num:]
+                                elif (score_remain <= 40 and score_remain%2==0):
+                                    num_turns_array[:imdp.throw_num,score_gained_index] += prob_doublescore_dic_nt[score_remain][:imdp.throw_num]
+                                    num_turns_array[imdp.throw_num:,score_gained_index] += prob_doublescore_dic_t[score_remain][imdp.throw_num:]
+                                else:
+                                    pass
+        
+                            ## transit to bust
+                            if (rt==3):
+                                # In this case you really are staying in the same state becuase it's the first throw of the turn
+                                # Unless you go bust with the current token policy (should never happen, but need to include to avoid choosing those actions)
+                                if tok > 0: 
+                                    
+                                    # For no token, add the probbability of staying the same with nt 
+                                    num_turns_array[:imdp.throw_num,score_gained_index] += prob_bust_dic_nt[score_max][:imdp.throw_num]
+                                    ## solve an equation other than using the policy evaluation value (s,i=3,u=0)
+                                    num_turns_array[:imdp.throw_num,score_gained_index] = num_turns_array[:imdp.throw_num,score_gained_index] / prob_notbust_dic_nt[score_max][:imdp.throw_num]
+                                    
+                                    # For token, add the probability of going to the new rt3 state (1 should already be included)
+                                    # TODO check that this makes sense - not sure about the +1 here 
+                                    num_turns_array[imdp.throw_num:,score_gained_index] += prob_bust_dic_t[score_max][imdp.throw_num:]*(1+optimal_value_rt3[tok-1,score_state])  ## 1 turn is already counted before
+                                    ## solve an equation other than using the policy evaluation value (s,i=3,u=0)
+                                    num_turns_array[imdp.throw_num:,score_gained_index] = num_turns_array[imdp.throw_num:,score_gained_index] / prob_notbust_dic_t[score_max][imdp.throw_num:]
+                                    
+                                    
+                                else: 
+                                    # If no token, use this logic with nt 
+                                    num_turns_array[:,score_gained_index] += prob_bust_dic_nt[score_max]
+                                    ## solve an equation other than using the policy evaluation value (s,i=3,u=0)
+                                    num_turns_array[:,score_gained_index] = num_turns_array[:,score_gained_index] / prob_notbust_dic_nt[score_max] 
+                                    
+                            elif (rt==2):
+                                num_turns_array[:imdp.throw_num,score_gained_index] += prob_bust_dic_nt[score_max][:imdp.throw_num]*(1+new_value_rt3)
+                                num_turns_array[imdp.throw_num:,score_gained_index] += prob_bust_dic_t[score_max][imdp.throw_num:]*(1+optimal_value_rt3[tok-1,score_state])
+                            else:
+                                # TODO check that the +1 makes sense here 
+                                num_turns_array[:imdp.throw_num,score_gained_index] += prob_bust_dic_nt[score_max][:imdp.throw_num]*(new_value_rt3)  ## 1 turn is already counted before
+                                num_turns_array[imdp.throw_num:,score_gained_index] += prob_bust_dic_t[score_max][imdp.throw_num:]*(1+optimal_value_rt3[tok-1,score_state])
+                        
+                        ## searching
+                        if tok == 0: 
+                            temp1 = num_turns_tensor[:imdp.throw_num].min(axis=0)
+                        else: 
+                            temp1 = num_turns_tensor.min(axis=0)
+                        state_action_update[rt][tok][state_notbust_len:this_throw_state_len] = temp1.indices.numpy()
+                        state_value_update[rt][tok][state_notbust_len:this_throw_state_len] =  temp1.values.numpy()                
+        
+                    #### finish rt=1,2,3. check improvement
+                    action_diff[rt][tok][:] = np.abs(state_action_update[rt][tok] - state_action[rt][tok])                                
+                    value_relerror[rt] = np.abs((state_value_update[rt] - state_value[rt])/state_value_update[rt]).max()
+                    state_action[rt][tok][:] = state_action_update[rt][tok][:]
+                    state_value[rt][tok][:] = state_value_update[rt][tok][:]
+        
+                max_action_diff = max([action_diff[1].max(), action_diff[2].max(), action_diff[3].max()])
+                max_value_relerror = value_relerror.max()            
+                
+                if (max_action_diff < 1):
+                #if max_value_relerror < iteration_relerror_limit:
+                    num_iteration_record[score_state] = round_index + 1
+                    break
+
+
+            for rt in [1,2,3]:
+                state_value_update[rt][tok][fb.state_infeasible[rt]] = fb.largenumber
+                state_action_update[rt][tok][fb.state_infeasible[rt]] = fb.infeasible_marker
+            optimal_action_index_dic[score_state] = ft.copy_numberarray_container(state_action_update)
+            optimal_value_dic[score_state] = ft.copy_numberarray_container(state_value_update, new_dtype=fb.result_float_dytpe)
+            optimal_value_rt3[tok][score_state] = state_value[3][tok][0]
+
+    prob_scorestate_transit = {}    
+    #prob_scorestate_transit =  fep.solve_policy_transit_probability(optimal_action_index_dic, prob_grid_normalscore, prob_grid_doublescore, prob_grid_bullscore)
+    prob_scorestate_transit = solve_policy_transit_probability(tokens, optimal_action_index_dic, prob_grid_normalscore_nt, prob_grid_doublescore_nt, prob_grid_bullscore_nt, prob_bust_dic_nt,prob_grid_normalscore_t, prob_grid_doublescore_t, prob_grid_bullscore_t, prob_bust_dic_t)
+    t2 = time.time()
+    print('solve dp_turn_policyiter in {} seconds'.format(t2-t1))
+
+    print(optimal_value_rt3)
+    result_dic = {'optimal_value_dic':optimal_value_dic, 'optimal_action_index_dic':optimal_action_index_dic, 'optimal_value_rt3':optimal_value_rt3, 'prob_scorestate_transit':prob_scorestate_transit}
+
+    return result_dic 
 

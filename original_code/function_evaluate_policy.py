@@ -114,6 +114,7 @@ def solve_turn_transit_probability_fast(score_state, state_action, prob_normalsc
         
             ## transit to next throw or turn with normal scores            
             prob_transit_next_throw_state[score_gained:score_gained+score_max_plus1] += prob_normalscore_transit[score_gained, 0:score_max_plus1]
+            
             ## game can not bust or end when score_max = 60, i.e.,  prob_notbust = 1
             if (score_max < 60):
                 ## transit to the end of game
