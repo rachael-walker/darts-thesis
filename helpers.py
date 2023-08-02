@@ -770,19 +770,6 @@ def solve_dp_turn_tokens(tokens, aiming_grid, prob_grid_normalscore_nt, prob_gri
     ## Initialize probability objects
     num_aiming_location, prob_normalscore_nt, prob_doublescore_dic_nt, prob_DB_nt, prob_bust_dic_nt, prob_notbust_dic_nt, prob_normalscore_t, prob_doublescore_dic_t, prob_DB_t, prob_bust_dic_t, prob_notbust_dic_t = init_probabilities( aiming_grid, prob_grid_normalscore_nt, prob_grid_doublescore_nt, prob_grid_bullscore_nt, prob_grid_normalscore_t, prob_grid_doublescore_t, prob_grid_bullscore_t)    
 
-    # Combined probabilities  
-    prob_grid_normalscore_comb = np.zeros(prob_grid_normalscore_t.shape)
-    prob_grid_normalscore_comb[:imdp.throw_num,:] = prob_grid_normalscore_nt[:imdp.throw_num,:]
-    prob_grid_normalscore_comb[imdp.throw_num:] = prob_grid_normalscore_t[imdp.throw_num:]
-
-    prob_grid_doublescore_comb = np.zeros(prob_grid_doublescore_t.shape)
-    prob_grid_doublescore_comb[:imdp.throw_num,:] = prob_grid_doublescore_nt[:imdp.throw_num,:]
-    prob_grid_doublescore_comb[imdp.throw_num:] = prob_grid_doublescore_t[imdp.throw_num:]
-
-    prob_grid_bullscore_comb = np.zeros(prob_grid_bullscore_t.shape)
-    prob_grid_bullscore_comb[:imdp.throw_num,:] = prob_grid_bullscore_nt[:imdp.throw_num,:]
-    prob_grid_bullscore_comb[imdp.throw_num:] = prob_grid_bullscore_t[imdp.throw_num:]
-
     # Initialize joint probability notbust dictionary 
     prob_notbust_dic = {}
     for score_max in prob_notbust_dic_t.keys():
@@ -800,7 +787,6 @@ def solve_dp_turn_tokens(tokens, aiming_grid, prob_grid_normalscore_nt, prob_gri
 
     prob_normalscore_tensor_nt = torch.from_numpy(prob_normalscore_nt)
     prob_normalscore_tensor_t = torch.from_numpy(prob_normalscore_t)
-    prob_normalscore_tensor = torch.from_numpy(prob_grid_normalscore_comb)
 
     # prob_doublescore_dic = prob_doublescore_dic_nt
     # prob_DB = prob_DB_nt
@@ -1238,3 +1224,29 @@ def solve_dp_turn_tokens(tokens, aiming_grid, prob_grid_normalscore_nt, prob_gri
 
     return result_dic 
 
+
+def solve_singlegame_token(name_pa, epsilon, tokens=9, data_parameter_dir=fb.data_parameter_dir, result_dir=None, postfix=''):
+    """
+    Solve the single player game with the turn feature and tokens. Find the optimal policy to minimize the expected number of turns for reaching zero score. 
+    Args: 
+        name_pa: player ID
+        data_parameter_dir=fb.data_parameter_dir          
+        result_dir: folder to store the result 
+        postfix='':
+        gpu_device: None for CPU computation, otherwise use the gpu device ID defined in the system (default 0).
+    Returns: 
+        Either returns a dictionary or will save to the results directory if one is specified.
+    """
+    [aiming_grid, prob_grid_normalscore_nt, prob_grid_singlescore_nt, prob_grid_doublescore_nt, prob_grid_triplescore_nt, prob_grid_bullscore_nt] = load_aiming_grid(name_pa, epsilon=epsilon, data_parameter_dir=data_parameter_dir, grid_version='custom_no_tokens')
+    [aiming_grid, prob_grid_normalscore_t, prob_grid_singlescore_t, prob_grid_doublescore_t, prob_grid_triplescore_t, prob_grid_bullscore_t] = load_aiming_grid('t', data_parameter_dir=data_parameter_dir, grid_version='custom_tokens')
+
+    print('runing solve_dp_turn with credits')
+    result_dic = solve_dp_turn_tokens(tokens, aiming_grid, prob_grid_normalscore_nt, prob_grid_singlescore_nt, prob_grid_doublescore_nt, prob_grid_triplescore_nt, prob_grid_bullscore_nt,prob_grid_normalscore_t, prob_grid_singlescore_t, prob_grid_doublescore_t, prob_grid_triplescore_t, prob_grid_bullscore_t)
+
+    if (result_dir is not None):
+        if not os.path.isdir(result_dir):
+            os.makedirs(result_dir)        
+        result_filename = result_dir + '/singlegame_{}_e{}_turn_tokens{}.pkl'.format(name_pa, epsilon, postfix)
+        ft.dump_pickle(result_filename, result_dic, printflag=True)
+    else:
+        return result_dic
