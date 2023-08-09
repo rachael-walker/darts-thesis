@@ -1,23 +1,25 @@
 # Darts Handicapping Respoitory 
 
-This repository contains code that was used to model and evaluate different handicap systems for the game of darts using a Markov Decision Process (MDP) framework. 
+This repository contains code that was used to model and evaluate different handicap systems for the game of darts using a Markov Decision Process (MDP) framework.
 
-The key file in this repository is **`helpers.py`** which contains all of the modelling code. This file is called in almost every jupyter notebook in this repository. 
+The majority of the analysis can be found in the `analysis` directory. There are five subdirectories containing major branches of analysis. 
 
-The model code is called in **`generate_turn_data.ipynb`** to produce the csv: `player10_results.csv` which contains the solved optimal policy and value function for every state for a specified group of skill levels. 
+1. `0_analysis_skill` 
+2. `1_analysis_singleplayer_noturn`
+3. `2_analysis_singleplayer_turn`
+4. `3_analysis_twoplayer_ns_turn`
+5. `4_analysis_twoplayer_zsg_turn`
 
-The optimal policy and value function are explored in the following exploratory data analysis files: **`eda_policy.ipynb`** and **`eda_value.ipynb`**. 
+All skill model data can be found in the `data_parameter` directory.
+* `ALL_Model_Fits.mat` contains the bivariate Gaussians fit by Haugh & Wang in their 2022 Paper.
+* Integrated skill models are also stored in the subdirectory `player_gaussin_fit`.
+* `Raw_Data.xlsx` contains the raw throw data that Haugh & Wang used to fit the bivariate Gaussian skill models.
 
-In addition, there are two class modules: `simulator.py` and `\handicap.py`. 
+The `result` directory contains solved MDPs (i.e. policies and value functions) as well as datasets generated via simulation. For smaller models, summary .csv folders are saved in addition to .pkl files. 
 
 
-There are six sub-directories: 
-1. **`analysis_noturn`**: contains the exploratory data analysis completed for a simplified "throws" model which does not consider that players may take turns. 
-2. **`analysis_skill`**: contains exploratory data analysis around professional player skill models. 
-3. **`data_parameter`**: contains the integrated transition probabilities derived from different skill models (both different players and $\epsilon$ values. 
-4. **`debugging`**: contains old files that were used in the model development and debugging process. 
-5. **`original_code`**: contains the code from Haugh & Wang's 2022 paper "Play Like the Pros" which was instrumental in this repository, which extends (and sometimes directly uses) their original functions. 
-6. **`results`**: contains data files that were generated for some of the smaller and simpler models. Many results are not included here because the data was too large to upload to GitHub. 
+
+
 
 
 
