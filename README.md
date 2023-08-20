@@ -37,11 +37,19 @@ All data relating to skill models and transition probabilities can be found in t
 
 The `result` directory is generated once the analysis files are run. This directory contains solved MDPs (i.e. policies and value functions) as well as datasets generated via simulation. For smaller models, summary .csv folders are saved in addition to .pkl files. 
 
+Finally, the main repository contains several helper modules containing the core functions and parameters used for all analysis. 
+* `class_handicap.py`: Defines the Handicap class which can be used to quickly and efficiently compute any desired handicap for either the turn or no-turn MDP models (depending on how it's initialized).
+* `class_simulator_noturn.py`: Defines a Simulator class which can be used to simulate game outcomes when there is no turn feature. 
+* `class_simulator_turn.py`: Defines a Simulator class which can be used to simulate game outcomes when there is a turn feature. 
+* `function_helpers_singleplayer.py`: Defines helper functions for all single-player analysis. This includes integrating the underlying skill models to calculate transition probabilities as well as solving the no-turn and turn MDPs (i.e. supports analysis directories 0,1, and 2 directly, which in turn support analysis directories 3 and 4).
+* `function_helpers_twoplayer.py`: Defines helper functions for all two-player analysis. This includes two-player policy evaluation using a two-player Markov chain formulation (analysis directory 3) and two-player optimization using a best-response or ZSG formulation (analysis directory 4).
+* `function_init_board.py`: Defines board dimensions which are used for integration of skill models. These definitions were taken from Haugh & Wang's original darts code. 
+* `function_init_simple_mdp.py`: Defines components of core underlying MDP and provides datastructures which can support interpretation of analysis. Most critically, the action set is defined in this module. 
+* `function_plot_board.py`: Defines measurements which are used for all board plotting. 
+* `function_tool.py`: Contains helper function to assist with saving and loading .pkl files. These functions were taken from Haugh and Wang's original darts code. 
 
 
-
-
-
+Would like to thank Martin Haugh & Chun Wang for producing a very clean [codebase](https://github.com/wangchunsem/OptimalDarts) and sharing it publicly. Their original work was instrumental in producing this analysis. 
 
 
 
