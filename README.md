@@ -2,7 +2,7 @@
 
 This repository contains code that was used to model and evaluate different handicap systems for the game of darts using a Markov Decision Process (MDP) framework.
 
-The majority of the analysis can be found in the `analysis` directory. There are five subdirectories containing major branches of analysis. 
+The bulk of our work and exploration can be found in the `analysis` directory. There are five subdirectories containing major branches of analysis. 
 
 0. `0_analysis_skill`: Creates the transition probability datasets.
     - `0_0_generate_skill_models.ipynb`: Prerequisite for all other analysis. Integrates the bivariate Gaussian skill models of all players and saves the corresponding transition probabilities. 

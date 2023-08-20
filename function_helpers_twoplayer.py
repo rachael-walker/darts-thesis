@@ -1,11 +1,29 @@
 import numpy as np
+import pandas as pd 
+import time
+
+import os
+import sys
+
+import numpy as np
+np.set_printoptions(precision=4)
+np.set_printoptions(linewidth=300)
+np.set_printoptions(threshold=300)
+
+import torch
+torch.set_printoptions(precision=3)
+torch.set_printoptions(linewidth=300)
+torch.set_printoptions(threshold=300)
+
 import function_init_board as fb
 import function_init_simple_mdp as imdp
 import function_helpers_singleplayer as h
+import function_tool as ft 
 
 
 
-def zsg_policy_evaluation_tokens(value_pa, value_pb, tokens_pa, score_state_pa, score_state_pb, prob_turn_transit_pa, prob_turn_transit_pb):
+
+def win_probability_policy_evaluation_tokens(value_pa, value_pb, tokens_pa, score_state_pa, score_state_pb, prob_turn_transit_pa, prob_turn_transit_pb):
     """
     Compute the game value (in terms of Player A's winning probability) for a specific turn (score_state_pa, score_state_pb) given Player A and B's policies. 
     Args: 
@@ -32,10 +50,6 @@ def zsg_policy_evaluation_tokens(value_pa, value_pb, tokens_pa, score_state_pa, 
     prob_zeroscore_pb = prob_turn_transit_pb['bust'][0] + prob_score_pb[0][0]
 
     possible_tokens_used = prob_turn_transit_pa['bust'].shape[0] - 1
-
-    # sa = sum(sum(prob_turn_transit_pa['score'])) + sum(prob_turn_transit_pa['bust']) + prob_turn_transit_pa['finish']
-    # sb = sum(sum(prob_turn_transit_pb['score'])) + sum(prob_turn_transit_pb['bust']) + prob_turn_transit_pb['finish']
-    # print(sa,sb)
 
     # Transit to end
     constant_pa = prob_finish_pa * value_win_pa
@@ -64,16 +78,80 @@ def zsg_policy_evaluation_tokens(value_pa, value_pb, tokens_pa, score_state_pa, 
 
 
 
+def evaluate_win_probabilities(result_dic_weaker,result_dic_stronger):
+    """
+    Solve the Markov Chain, computing the game value (in terms of Player A's winning probability) for the whole game given Player A and B's policies. 
+    
+    Args: 
+        result_dic_weaker, result_dic_stronger: result dictionaries for weaker and stronger players containing their optimal non-strategic policies solved in the original single-player MDP.
+        
+    Returns: 
+        value_pa: Cube of weaker player's winning probability when it is the start of the weaker player's turn at state indexed by (weaker player's credits, weaker player's score, stronger player's score).
+        value_pb: Cube of weaker player's winning probability when it is the start of the stronger player's turn at state indexed by (weaker player's credits, weaker player's score, stronger player's score).
+    """
+    # Let player a be the weaker player and player b be the stronger player 
+    tokens_a = 9
+    game_begin_score_502 = 501+1
+
+    # end game state value
+    value_win_pa = 1 # A win
+    value_win_pb = 0 # A lose
+
+    value_pa = np.zeros((tokens_a+1,502,502))  # player A's winning probability when A throws at state [score_A, score_B]
+    value_pb = np.zeros((tokens_a+1,502,502))  # player A's winning probability when B throws at state [score_A, score_B]
+
+    result_dic_a = result_dic_weaker
+    result_dic_b = result_dic_stronger
+
+    for tokens_pa in range(tokens_a+1):
+
+        for score_state_pb in range(2,502):
+
+            for score_state_pa in range(2,502):
+
+                prob_turn_transit_pa = result_dic_a['prob_scorestate_transit'][tokens_pa][score_state_pa]
+                prob_turn_transit_pb = result_dic_b['prob_scorestate_transit'][0][score_state_pb]
+
+                [value_state_pa, value_state_pb] = win_probability_policy_evaluation_tokens(value_pa, value_pb, tokens_pa, score_state_pa, score_state_pb, prob_turn_transit_pa, prob_turn_transit_pb)
+
+                value_pa[tokens_pa,score_state_pa,score_state_pb] = value_state_pa
+                value_pb[tokens_pa,score_state_pa,score_state_pb] = value_state_pb
+
+    return value_pa, value_pb      
+
+
+def build_win_probability_dataset(e_stronger, e_weaker, value_weaker, value_stronger):
+
+    df_list = []
+
+    for credits_weaker in range(value_weaker.shape[0]):
+
+        for score_weaker in range(2,502):
+
+            for score_stronger in range(2,502):
+
+                win_probability_weaker_starting = value_weaker[credits_weaker][score_weaker][score_stronger]
+                win_probability_stronger_starting = value_stronger[credits_weaker][score_weaker][score_stronger]
+
+                df_list.append([e_weaker,e_stronger,score_weaker,score_stronger,credits_weaker,'weaker',win_probability_weaker_starting])
+                df_list.append([e_weaker,e_stronger,score_weaker,score_stronger,credits_weaker,'stronger',win_probability_stronger_starting])
+
+    columns = ['epsilon_weaker','epsilon_stronger','score_weaker','score_stronger','credits_weaker','current_turn','win_probability_weaker']
+
+    return pd.DataFrame(df_list,columns = columns )
+
+
 def load_ns_policy_dicts(name_pw,name_ps,epsilon_pw,epsilon_ps,dp_policy_folder,aiming_grid, prob_grid_normalscore_nt_pw, prob_grid_singlescore_nt_pw, prob_grid_doublescore_nt_pw, prob_grid_triplescore_nt_pw, prob_grid_bullscore_nt_pw, prob_grid_normalscore_nt_ps, prob_grid_singlescore_nt_ps, prob_grid_doublescore_nt_ps, prob_grid_triplescore_nt_ps, prob_grid_bullscore_nt_ps, prob_grid_normalscore_t, prob_grid_singlescore_t, prob_grid_doublescore_t, prob_grid_triplescore_t, prob_grid_bullscore_t):
-     ## use single player game as the fixed policy    
+    
+    ## use single player game as the fixed policy    
     dp_policy_dict_pw = None
     dp_policy_dict_ps = None
     if dp_policy_folder is not None:
-        dp_policy_filename_pw = dp_policy_folder + '/singlegame_results/singlegame_{}_e{}_turn_tokens.pkl'.format(name_pw,epsilon_pw)
+        dp_policy_filename_pw = dp_policy_folder + '/singlegame_{}_e{}_turn_tokens.pkl'.format(name_pw,epsilon_pw)
         if (os.path.isfile(dp_policy_filename_pw) == True):
             dp_policy_dict_pw = ft.load_pickle(dp_policy_filename_pw)
             print('load weaker player policy {}'.format(dp_policy_filename_pw))
-        dp_policy_filename_ps = dp_policy_folder + '/singlegame_results/singlegame_{}_e{}_turn_tokens.pkl'.format(name_ps,epsilon_ps)
+        dp_policy_filename_ps = dp_policy_folder + '/singlegame_{}_e{}_turn_tokens.pkl'.format(name_ps,epsilon_ps)
         if (os.path.isfile(dp_policy_filename_ps) == True):
             dp_policy_dict_ps = ft.load_pickle(dp_policy_filename_ps)
             print('load stronger player policy {}'.format(dp_policy_filename_ps))    
@@ -85,7 +163,6 @@ def load_ns_policy_dicts(name_pw,name_ps,epsilon_pw,epsilon_ps,dp_policy_folder,
         dp_policy_dict_ps = h.solve_dp_turn_tokens(9, aiming_grid, prob_grid_normalscore_nt_ps, prob_grid_singlescore_nt_ps, prob_grid_doublescore_nt_ps, prob_grid_triplescore_nt_ps, prob_grid_bullscore_nt_ps, prob_grid_normalscore_t, prob_grid_singlescore_t, prob_grid_doublescore_t, prob_grid_triplescore_t, prob_grid_bullscore_t)
 
     return dp_policy_dict_pw,dp_policy_dict_ps
-
 
 def zsg_policy_improvement_tokens(param):
     """
@@ -326,7 +403,7 @@ def zsg_policy_improvement_tokens(param):
                     pass  
 
                 ## transit to bust
-                win_prob_array[:imdp.throw_num,score_gained_index] += prob_bust_dic_nt[score_max][:imdp.throw_num]*(next_turn_value[token_state][score_state])  ## 1 turn is already counted before
+                win_prob_array[:imdp.throw_num,score_gained_index] += prob_bust_dic_nt[score_max][:imdp.throw_num]*(next_turn_value[token_state][score_state])
                 win_prob_array[imdp.throw_num:,score_gained_index] += prob_bust_dic_t[score_max][imdp.throw_num:]*(next_turn_value[token_state-1][score_state])
                     
             ## searching
@@ -355,10 +432,10 @@ def zsg_policy_improvement_tokens(param):
     return [max_action_diff, max_value_relerror]
 
 
-def solve_zsg_optW_fixNS(name_pw, name_ps, epsilon_pw, epsilon_ps, max_tokens_optimize=9, data_parameter_dir=fb.data_parameter_dir, dp_policy_folder=None, result_dir=None, postfix='', gpu_device=None):
+def solve_zsg_optW_fixNS(name_pw, name_ps, epsilon_pw, epsilon_ps, max_tokens_optimize=9, game_begin_score_502=502, data_parameter_dir=fb.data_parameter_dir, dp_policy_folder=None, result_dir=None, postfix='', gpu_device=None):
     
     max_tokens=max_tokens_optimize
-    game_begin_score_502 = 501+1
+    game_begin_score_502 = game_begin_score_502
     
     info = 'W_{}e{}_S_{}e{}_optW'.format(name_pw, epsilon_pw, name_ps, epsilon_ps)
     print(info)
@@ -421,7 +498,7 @@ def solve_zsg_optW_fixNS(name_pw, name_ps, epsilon_pw, epsilon_ps, max_tokens_op
     optimal_value_dic = {} 
     optimal_action_index_dic = {}
     prob_turn_transit_dic_pw = {}
-    for score in range(2,502):
+    for score in range(2,game_begin_score_502):
         optimal_value_dic[score] = {}
         optimal_action_index_dic[score] = {}
         prob_turn_transit_dic_pw[score] = {}
@@ -433,30 +510,28 @@ def solve_zsg_optW_fixNS(name_pw, name_ps, epsilon_pw, epsilon_ps, max_tokens_op
     t1 = time.time()
     for score_state_ps in range(2, game_begin_score_502):
         t_scoreloop_begin = time.time()
-        print('stronger state:',score_state_ps,'time:',t_scoreloop_begin-t1)
+        #print('stronger state:',score_state_ps,'time:',t_scoreloop_begin-t1)
         score_state_list = []
 
-        ## fix player B score, loop through player A
+       ## fix player B score, loop through player A
         for score_state_pw in range(2, game_begin_score_502):
 
-            for tokens_pw in range(0,max_tokens+1):
-                
-                score_state_list.append([tokens_pw, score_state_pw, score_state_ps])
+            score_state_list.append([score_state_pw, score_state_ps])
 
-        for [tokens_pw, score_state_pw, score_state_ps] in score_state_list:
+        for [score_state_pw, score_state_ps] in score_state_list:
             # print('state',tokens_pw,score_state_pw,score_state_ps)
 
             ## initialize player A initial policy:
             for rt in [1,2,3]:        
-                this_throw_state_len_pw = min(score_state_pw-2, fb.maxhitscore*(3-rt)) + 1
-                state_len_vector_pw[rt] = this_throw_state_len_pw
+                this_throw_state_len_pa = min(score_state_pw-2, fb.maxhitscore*(3-rt)) + 1
+                state_len_vector_pw[rt] = this_throw_state_len_pa
             state_value_pw = ft.copy_numberarray_container(state_value_default)
             if score_state_ps > 2:
                 state_action_pw = ft.copy_numberarray_container(optimal_action_index_dic[score_state_pw][score_state_ps-1])
-                prob_turn_transit_pw = prob_turn_transit_dic_pw[score_state_pw][score_state_ps-1]
+                #prob_turn_transit_pw = prob_turn_transit_dic_pw[score_state_pw][score_state_ps-1]
             else:
                 state_action_pw = ft.copy_numberarray_container(dp_policy_dict_pw['optimal_action_index_dic'][score_state_pw])
-                prob_turn_transit_pw = dp_policy_dict_pw['prob_scorestate_transit'][tokens_pw][score_state_pw]
+                #prob_turn_transit_pw = dp_policy_dict_pw['prob_scorestate_transit'][tokens_pw][score_state_pw]
             state_value_update_pw = ft.copy_numberarray_container(state_value_pw)
             state_action_update_pw = ft.copy_numberarray_container(state_action_pw)
 
@@ -467,7 +542,6 @@ def solve_zsg_optW_fixNS(name_pw, name_ps, epsilon_pw, epsilon_ps, max_tokens_op
             ## player A
             param_pw['state_len_vector'] = state_len_vector_pw
             param_pw['score_state'] = score_state_pw  
-            param_pw['token_state'] = tokens_pw   
             param_pw['state_action'] = state_action_pw
             param_pw['state_value'] = state_value_pw
             param_pw['state_action_update'] = state_action_update_pw
@@ -476,41 +550,51 @@ def solve_zsg_optW_fixNS(name_pw, name_ps, epsilon_pw, epsilon_ps, max_tokens_op
             param_pw['value_relerror'] = value_relerror_pw        
             ## maximize player A's win_prob
             param_pw['flag_max'] = True
-            param_pw['next_turn_value'] = value_ps[:,score_state_ps] ## player B throws in next turn
+            param_pw['next_turn_value'] = value_ps[:,:,score_state_ps] ## player B throws in next turn
             param_pw['game_end_value'] = value_win_pw
 
-            ## policy iteration
-            for round_index in range(iteration_round_limit):            
+            for tokens_pw in range(0,max_tokens+1):
+
+                param_pw['token_state'] = tokens_pw  
                 
-                #### policy evaluation ####
-                tpe1 = time.time()
-                ## evaluate current policy, player A winning probability at (score_pa, score_pb, i=3, u=0)
-                ## value_pa: player A throws first, value_pb: player A throws second 
-                ## player A, turn score transit probability                
-                ## use the initial prob_turn_transit_pa value for round_index=0
-                if (round_index >=0):
-                    prob_turn_transit_pw = h.solve_turn_transit_probability_fast_token(score_state=score_state_pw,state_action=state_action_pw,available_tokens=tokens_pw,prob_grid_normalscore_nt=prob_grid_normalscore_nt_pw,prob_grid_doublescore_nt=prob_grid_doublescore_nt_pw,prob_grid_bullscore_nt=prob_grid_bullscore_nt_pw,prob_bust_dic_nt=prob_bust_dic_nt_pw,prob_grid_normalscore_t=prob_grid_normalscore_t,prob_grid_doublescore_t=prob_grid_doublescore_t,prob_grid_bullscore_t=prob_grid_bullscore_t,prob_bust_dic_t=prob_bust_dic_t)
-                [value_state_pw, value_state_ps] = zsg_policy_evaluation_tokens(value_pw, value_ps, tokens_pw, score_state_pw, score_state_ps, prob_turn_transit_pw, prob_turn_transit_ps)
-                value_pw[tokens_pw, score_state_pw, score_state_ps] = value_state_pw
-                value_ps[tokens_pw, score_state_pw, score_state_ps] = value_state_ps
-                tpe2 = time.time()
-                t_policy_evaluation += (tpe2-tpe1) 
+                if score_state_ps > 2:
+                    prob_turn_transit_pw = prob_turn_transit_dic_pw[score_state_pw][score_state_ps-1]
+                else:
+                    prob_turn_transit_pw = dp_policy_dict_pw['prob_scorestate_transit'][tokens_pw][score_state_pw]
 
-                #### policy improvement for player A ####
-                tpi1 = time.time()
-                param_pw['round_index'] = round_index
-                [max_action_diff, max_value_relerror] = zsg_policy_improvement_tokens(param_pw)
-                tpi2 = time.time()
-                t_policy_improvement += (tpi2 - tpi1)                
-                if (max_action_diff < 1):
-                    break
-                if (max_value_relerror < iteration_relerror_limit):
-                    break
+                ## policy iteration
+                for round_index in range(iteration_round_limit):            
+                    
+                    #### policy evaluation ####
+                    tpe1 = time.time()
+                    ## evaluate current policy, player A winning probability at (score_pa, score_pb, i=3, u=0)
+                    ## value_pa: player A throws first, value_pb: player A throws second 
+                    ## player A, turn score transit probability                
+                    ## use the initial prob_turn_transit_pa value for round_index=0
+                    if (round_index >=0):
+                        prob_turn_transit_pw = h.solve_turn_transit_probability_fast_token(score_state=score_state_pw,state_action=state_action_pw,available_tokens=tokens_pw,prob_grid_normalscore_nt=prob_grid_normalscore_nt_pw,prob_grid_doublescore_nt=prob_grid_doublescore_nt_pw,prob_grid_bullscore_nt=prob_grid_bullscore_nt_pw,prob_bust_dic_nt=prob_bust_dic_nt_pw,prob_grid_normalscore_t=prob_grid_normalscore_t,prob_grid_doublescore_t=prob_grid_doublescore_t,prob_grid_bullscore_t=prob_grid_bullscore_t,prob_bust_dic_t=prob_bust_dic_t)
+                    [value_state_pw, value_state_ps] = win_probability_policy_evaluation_tokens(value_pw, value_ps, tokens_pw, score_state_pw, score_state_ps, prob_turn_transit_pw, prob_turn_transit_ps)
+                    value_pw[tokens_pw, score_state_pw, score_state_ps] = value_state_pw
+                    value_ps[tokens_pw, score_state_pw, score_state_ps] = value_state_ps
+                    tpe2 = time.time()
+                    t_policy_evaluation += (tpe2-tpe1) 
 
-            optimal_action_index_dic[score_state_pw][score_state_ps] = state_action_pw
-            optimal_value_dic[score_state_pw][score_state_ps] = state_value_pw
-            prob_turn_transit_dic_pw[score_state_pw][score_state_ps] = prob_turn_transit_pw
-            num_iteration_record_pw[tokens_pw, score_state_pw, score_state_ps] = round_index + 1
+                    #### policy improvement for player A ####
+                    tpi1 = time.time()
+                    param_pw['round_index'] = round_index
+
+                    [max_action_diff, max_value_relerror] = zsg_policy_improvement_tokens(param_pw)
+                    tpi2 = time.time()
+                    t_policy_improvement += (tpi2 - tpi1)                
+                    if (max_action_diff < 1):
+                        break
+                    if (max_value_relerror < iteration_relerror_limit):
+                        break
+
+                optimal_action_index_dic[score_state_pw][score_state_ps] = state_action_pw
+                optimal_value_dic[score_state_pw][score_state_ps] = state_value_pw
+                prob_turn_transit_dic_pw[score_state_pw][score_state_ps] = prob_turn_transit_pw
+                num_iteration_record_pw[tokens_pw, score_state_pw, score_state_ps] = round_index + 1
 
     ## computation is done
     t2 = time.time()
@@ -533,7 +617,7 @@ def solve_zsg_optW_fixNS(name_pw, name_ps, epsilon_pw, epsilon_ps, max_tokens_op
 
 
 ## fix player A's Naive Strategy (NS) and optimize player B
-def solve_zsg_optS_fixNS(name_pw, name_ps, epsilon_pw, epsilon_ps, data_parameter_dir=fb.data_parameter_dir, dp_policy_folder=None, result_dir=None, postfix='', gpu_device=None):
+def solve_zsg_optS_fixNS(name_pw, name_ps, epsilon_pw, epsilon_ps, game_begin_score_502=502, data_parameter_dir=fb.data_parameter_dir, dp_policy_folder=None, result_dir=None, postfix='', gpu_device=None):
     
     max_tokens_stronger=0
     
@@ -548,7 +632,7 @@ def solve_zsg_optS_fixNS(name_pw, name_ps, epsilon_pw, epsilon_ps, data_paramete
 
     ## need to reset the result key name: Player A is name_pb and Player B is name_pa
     ## game values are represented in terms of Player A's winning probability
-    temp_result_dic = solve_zsg_optW_fixNS(name_ps, name_pw, epsilon_ps, epsilon_pw, max_tokens_optimize=max_tokens_stronger, dp_policy_folder=dp_policy_folder, result_dir=None, postfix='', gpu_device=gpu_device)
+    temp_result_dic = solve_zsg_optW_fixNS(name_ps, name_pw, epsilon_ps, epsilon_pw, max_tokens_optimize=max_tokens_stronger, game_begin_score_502=game_begin_score_502,dp_policy_folder=dp_policy_folder, result_dir=None, postfix='', gpu_device=gpu_device)
     result_dic = {'info':info}
     value_pw = 1-temp_result_dic['value_ps'].T    
     value_ps = 1-temp_result_dic['value_pw'].T
@@ -581,7 +665,7 @@ def solve_zsg_optS_fixNS(name_pw, name_ps, epsilon_pw, epsilon_ps, data_paramete
     
 
 ## optimize player A and B alternatively until achieving optimal
-def solve_zsg_optboth(name_pw, name_ps, epsilon_pw, epsilon_ps, data_parameter_dir=fb.data_parameter_dir, dp_policy_folder=None, result_dir=None, postfix='', gpu_device=None):
+def solve_zsg_optboth(name_pw, name_ps, epsilon_pw, epsilon_ps, game_begin_score_502=502, data_parameter_dir=fb.data_parameter_dir, dp_policy_folder=None, result_dir=None, postfix='', gpu_device=None):
     info = 'W_{}e{}_S_{}e{}_optboth'.format(name_pw, epsilon_pw, name_ps, epsilon_ps)
     print(info)
     ##
@@ -593,7 +677,7 @@ def solve_zsg_optboth(name_pw, name_ps, epsilon_pw, epsilon_ps, data_parameter_d
 
 
     max_tokens = 9
-    game_begin_score_502 = 501+1
+    game_begin_score_502 = game_begin_score_502 # 501+1
     #player A: pa throw first
     #player B: pb throw after player A, policy is fixed as ns
     print('player W is {} e{} and player S is {} e{}'.format(name_pw, epsilon_pw, name_ps, epsilon_ps))
@@ -641,17 +725,17 @@ def solve_zsg_optboth(name_pw, name_ps, epsilon_pw, epsilon_ps, data_parameter_d
     #### 
     iteration_round_limit_zsgtwoplayers = 5
     iteration_relerror_limit_zsgtwoplayers = 10**-9
-    iteration_round_zsgtwoplayers = np.zeros((max_tokens+1,502,502), dtype=np.int8)
+    iteration_round_zsgtwoplayers = np.zeros((max_tokens+1,game_begin_score_502,game_begin_score_502), dtype=np.int8)
 
     iteration_round_limit_singleplayer_policy = 20
     iteration_relerror_limit_singleplayer_policy = 10**-9
 
-    value_pw = np.zeros((max_tokens+1,502,502))  # player A's winning probability when A throws at state [score_A, score_B]
-    value_ps = np.zeros((max_tokens+1,502,502))  # player A's winning probability when B throws at state [score_A, score_B]
+    value_pw = np.zeros((max_tokens+1,game_begin_score_502,game_begin_score_502))  # player A's winning probability when A throws at state [score_A, score_B]
+    value_ps = np.zeros((max_tokens+1,game_begin_score_502,game_begin_score_502))  # player A's winning probability when B throws at state [score_A, score_B]
     value_win_pw = 1.0
     value_win_ps = 0.0
-    num_iteration_record_pw = np.zeros((max_tokens+1,502,502), dtype=np.int8)
-    num_iteration_record_ps = np.zeros((max_tokens+1,502,502), dtype=np.int8)
+    num_iteration_record_pw = np.zeros((max_tokens+1,game_begin_score_502,game_begin_score_502), dtype=np.int8)
+    num_iteration_record_ps = np.zeros((max_tokens+1,game_begin_score_502,game_begin_score_502), dtype=np.int8)
     ## values when optimizing A
     value_pw_optW = value_pw.copy()
     value_ps_optW = value_ps.copy()
@@ -681,7 +765,7 @@ def solve_zsg_optboth(name_pw, name_ps, epsilon_pw, epsilon_ps, data_parameter_d
     optimal_action_index_dic_ps = {}
     prob_turn_transit_dic_ps = {}
 
-    for score in range(2,502):
+    for score in range(2,game_begin_score_502):
         optimal_value_dic_pw[score] = {}
         optimal_action_index_dic_pw[score] = {}
         prob_turn_transit_dic_pw[score] = {}
@@ -695,19 +779,18 @@ def solve_zsg_optboth(name_pw, name_ps, epsilon_pw, epsilon_ps, data_parameter_d
     t_other = 0
     t1 = time.time()
     for score_state_ps in range(2, game_begin_score_502):
+
         t_scoreloop_begin = time.time()
-        print('stronger state:',score_state_ps,'time:',t_scoreloop_begin-t1)
+        #print('stronger state:',score_state_ps,'time:',t_scoreloop_begin-t1)
         score_state_list = []
 
         ## fix player B score, loop through player A
         for score_state_pw in range(2, game_begin_score_502):
-
-            for tokens_pw in range(0,max_tokens+1):
-                
-                score_state_list.append([tokens_pw, score_state_pw, score_state_ps])
+                                
+            score_state_list.append([score_state_pw, score_state_ps])
 
         ########     solve all states in turn [score_A, score_B]    ########
-        for [tokens_pw, score_state_pw, score_state_ps] in score_state_list:
+        for [score_state_pw, score_state_ps] in score_state_list:
             #print('##### score_state [score_pa, score_pb] = {} ####'.format([score_state_pa, score_state_pb]))
 
             ## initialize the starting policy:
@@ -718,10 +801,10 @@ def solve_zsg_optboth(name_pw, name_ps, epsilon_pw, epsilon_ps, data_parameter_d
             state_value_pw = ft.copy_numberarray_container(state_value_default)
             if score_state_ps > 2:
                 state_action_pw = ft.copy_numberarray_container(optimal_action_index_dic_pw[score_state_pw][score_state_ps-1])
-                prob_turn_transit_pw = prob_turn_transit_dic_pw[score_state_pw][score_state_ps-1]
+                #prob_turn_transit_pw = prob_turn_transit_dic_pw[score_state_pw][score_state_ps-1]
             else:
                 state_action_pw = ft.copy_numberarray_container(dp_policy_dict_pw['optimal_action_index_dic'][score_state_pw])
-                prob_turn_transit_pw = dp_policy_dict_pw['prob_scorestate_transit'][tokens_pw][score_state_pw]
+                #prob_turn_transit_pw = dp_policy_dict_pw['prob_scorestate_transit'][tokens_pw][score_state_pw]
             state_value_update_pw = ft.copy_numberarray_container(state_value_pw)
             state_action_update_pw = ft.copy_numberarray_container(state_action_pw)
 
@@ -743,8 +826,7 @@ def solve_zsg_optboth(name_pw, name_ps, epsilon_pw, epsilon_ps, data_parameter_d
             
             ## assemble variables
             ## player A
-            param_pw['score_state'] = score_state_pw   
-            param_pw['token_state'] = tokens_pw   
+            param_pw['score_state'] = score_state_pw    
             param_pw['state_len_vector'] = state_len_vector_pw        
             param_pw['state_action'] = state_action_pw
             param_pw['state_value'] = state_value_pw
@@ -772,101 +854,110 @@ def solve_zsg_optboth(name_pw, name_ps, epsilon_pw, epsilon_ps, data_parameter_d
             param_ps['next_turn_value'] = value_pw[:,score_state_pw,:] ## player A throws in next turn
             param_ps['game_end_value'] = value_win_ps ## end game state B win     
             
-            ## optimize A and B iteratively
-            for round_index_zsgtwoplayers in range(iteration_round_limit_zsgtwoplayers):
-                ## print('## optimize two players round = {} ##'.format(round_index_zsgtwoplayers))
-                ## iterate at least once for each player
-                
-                #### optimize A policy ####
-                value_pw_state_old = value_pw[tokens_pw, score_state_pw,score_state_ps] ## starting value 0
-                value_ps_state_old = value_ps[tokens_pw, score_state_pw,score_state_ps] ## starting value 0                
-                for round_index in range(iteration_round_limit_singleplayer_policy):                    
+            for tokens_pw in range(0,max_tokens+1):
+
+                param_pw['token_state'] = tokens_pw  
+
+                if score_state_ps > 2:
+                    prob_turn_transit_pw = prob_turn_transit_dic_pw[score_state_pw][score_state_ps-1]
+                else:
+                    prob_turn_transit_pw = dp_policy_dict_pw['prob_scorestate_transit'][tokens_pw][score_state_pw]
+
+                ## optimize A and B iteratively
+                for round_index_zsgtwoplayers in range(iteration_round_limit_zsgtwoplayers):
+                    ## print('## optimize two players round = {} ##'.format(round_index_zsgtwoplayers))
+                    ## iterate at least once for each player
                     
-                    ## policy evaluation
-                    tpe1 = time.time()                
-                    ## use the initial prob_turn_transit_pa value for round_index=0
-                    if (round_index >=0):
-                        prob_turn_transit_pw = h.solve_turn_transit_probability_fast_token(score_state=score_state_pw,state_action=state_action_pw,available_tokens=tokens_pw,prob_grid_normalscore_nt=prob_grid_normalscore_nt_pw,prob_grid_doublescore_nt=prob_grid_doublescore_nt_pw,prob_grid_bullscore_nt=prob_grid_bullscore_nt_pw,prob_bust_dic_nt=prob_bust_dic_nt_pw,prob_grid_normalscore_t=prob_grid_normalscore_t,prob_grid_doublescore_t=prob_grid_doublescore_t,prob_grid_bullscore_t=prob_grid_bullscore_t,prob_bust_dic_t=prob_bust_dic_t)
-                    ## player B is fixed, use stored value
-                    [value_state_pw, value_state_ps] = zsg_policy_evaluation_tokens(value_pw, value_ps, tokens_pw, score_state_pw, score_state_ps, prob_turn_transit_pw, prob_turn_transit_ps)
-                    value_pw[tokens_pw, score_state_pw, score_state_ps] = value_state_pw
-                    value_ps[tokens_pw, score_state_pw, score_state_ps] = value_state_ps
-                    tpe2 = time.time()
-                    t_policy_evaluation += (tpe2-tpe1) 
+                    #### optimize A policy ####
+                    value_pw_state_old = value_pw[tokens_pw, score_state_pw,score_state_ps] ## starting value 0
+                    value_ps_state_old = value_ps[tokens_pw, score_state_pw,score_state_ps] ## starting value 0                
+                    for round_index in range(iteration_round_limit_singleplayer_policy):                    
+                        
+                        ## policy evaluation
+                        tpe1 = time.time()                
+                        ## use the initial prob_turn_transit_pa value for round_index=0
+                        if (round_index >=0):
+                            prob_turn_transit_pw = h.solve_turn_transit_probability_fast_token(score_state=score_state_pw,state_action=state_action_pw,available_tokens=tokens_pw,prob_grid_normalscore_nt=prob_grid_normalscore_nt_pw,prob_grid_doublescore_nt=prob_grid_doublescore_nt_pw,prob_grid_bullscore_nt=prob_grid_bullscore_nt_pw,prob_bust_dic_nt=prob_bust_dic_nt_pw,prob_grid_normalscore_t=prob_grid_normalscore_t,prob_grid_doublescore_t=prob_grid_doublescore_t,prob_grid_bullscore_t=prob_grid_bullscore_t,prob_bust_dic_t=prob_bust_dic_t)
+                        ## player B is fixed, use stored value
+                        [value_state_pw, value_state_ps] = win_probability_policy_evaluation_tokens(value_pw, value_ps, tokens_pw, score_state_pw, score_state_ps, prob_turn_transit_pw, prob_turn_transit_ps)
+                        value_pw[tokens_pw, score_state_pw, score_state_ps] = value_state_pw
+                        value_ps[tokens_pw, score_state_pw, score_state_ps] = value_state_ps
+                        tpe2 = time.time()
+                        t_policy_evaluation += (tpe2-tpe1) 
 
-                    #### policy improvement for player A ####
-                    tpi1 = time.time()
-                    param_pw['round_index'] = round_index
-                    [max_action_diff_pw, max_value_relerror_pw] = zsg_policy_improvement_tokens(param_pw)
-                    tpi2 = time.time()
-                    t_policy_improvement += (tpi2 - tpi1)
-                    if (max_action_diff_pw < 1):
-                        break    
-                    if (max_value_relerror_pw < iteration_relerror_limit_singleplayer_policy):
-                        break
-        
-                optimal_action_index_dic_pw[score_state_pw][score_state_ps] = state_action_pw
-                optimal_value_dic_pw[score_state_pw][score_state_ps] = state_value_pw
-                prob_turn_transit_dic_pw[score_state_pw][score_state_ps] = prob_turn_transit_pw
-                num_iteration_record_pw[tokens_pw,score_state_pw, score_state_ps] = round_index + 1
-                #### done optimize player A
-                
-                ## check optimality
-                value_pw_optW[tokens_pw, score_state_pw,score_state_ps] = value_pw[tokens_pw, score_state_pw,score_state_ps]
-                value_ps_optW[tokens_pw, score_state_pw,score_state_ps] = value_ps[tokens_pw, score_state_pw,score_state_pw]
-                max_zsgvalue_relerror = max([np.abs(value_pw_state_old-value_pw[tokens_pw, score_state_pw,score_state_ps]), np.abs(value_ps_state_old-value_ps[tokens_pw, score_state_pw,score_state_ps])])
-                #print('A:max_zsgvalue_relerror={}'.format(max_zsgvalue_relerror))      
-                if (max_zsgvalue_relerror < iteration_relerror_limit_zsgtwoplayers):
-                    break
-
-
-                #### optimize B policy ####
-                value_pw_state_old = value_pw[tokens_pw, score_state_pw,score_state_ps] ## starting value 0
-                value_ps_state_old = value_ps[tokens_pw, score_state_pw,score_state_ps] ## starting value 0                
-                for round_index in range(iteration_round_limit_singleplayer_policy):                    
-                    
-                    ## policy evaluation
-                    tpe1 = time.time()
-                    ## player A is fixed, only need to compute once
-                    if (round_index >=0):
-                        prob_turn_transit_ps = h.solve_turn_transit_probability_fast_token(score_state=score_state_ps,state_action=state_action_ps,available_tokens=0,prob_grid_normalscore_nt=prob_grid_normalscore_nt_ps,prob_grid_doublescore_nt=prob_grid_doublescore_nt_ps,prob_grid_bullscore_nt=prob_grid_bullscore_nt_ps,prob_bust_dic_nt=prob_bust_dic_nt_ps,prob_grid_normalscore_t=prob_grid_normalscore_t,prob_grid_doublescore_t=prob_grid_doublescore_t,prob_grid_bullscore_t=prob_grid_bullscore_t,prob_bust_dic_t=prob_bust_dic_t)
-                    [value_state_pw, value_state_ps] = zsg_policy_evaluation_tokens(value_pw, value_ps, tokens_pw, score_state_pw, score_state_ps, prob_turn_transit_pw, prob_turn_transit_ps)
-                    value_pw[tokens_pw, score_state_pw, score_state_ps] = value_state_pw
-                    value_ps[tokens_pw, score_state_pw, score_state_ps] = value_state_ps
-                    tpe2 = time.time()
-                    t_policy_evaluation += (tpe2-tpe1) 
-
-                    #### policy improvement for player B ####
-                    tpi1 = time.time()
-                    param_ps['round_index'] = round_index
-                    [max_action_diff_ps, max_value_relerror_ps] = zsg_policy_improvement_tokens(param_ps)
-                    tpi2 = time.time()
-                    t_policy_improvement += (tpi2 - tpi1)
-                    if (max_action_diff_ps < 1):
-                        break    
-                    if (max_value_relerror_ps < iteration_relerror_limit_singleplayer_policy):
-                        break
-        
-                optimal_action_index_dic_ps[score_state_pw][score_state_ps] = state_action_ps
-                optimal_value_dic_ps[score_state_pw][score_state_ps] = state_value_ps
-                prob_turn_transit_dic_ps[score_state_pw][score_state_ps] = prob_turn_transit_ps
-                num_iteration_record_ps[tokens_pw, score_state_pw, score_state_ps] = round_index + 1
-                #### done optimize player B
-        
-                ## check optimality
-                value_pw_optS[tokens_pw, score_state_pw,score_state_ps] = value_pw[tokens_pw, score_state_pw,score_state_ps]
-                value_ps_optS[tokens_pw, score_state_pw,score_state_ps] = value_ps[tokens_pw, score_state_pw,score_state_ps]
-                max_zsgvalue_relerror = max([np.abs(value_pw_state_old-value_pw[tokens_pw, score_state_pw,score_state_ps]), np.abs(value_ps_state_old-value_ps[tokens_pw, score_state_pw,score_state_ps])])
-                #print('B:max_zsgvalue_relerror={}'.format(max_zsgvalue_relerror))
-                if (max_zsgvalue_relerror < iteration_relerror_limit_zsgtwoplayers):
-                    break
+                        #### policy improvement for player A ####
+                        tpi1 = time.time()
+                        param_pw['round_index'] = round_index
+                        [max_action_diff_pw, max_value_relerror_pw] = zsg_policy_improvement_tokens(param_pw)
+                        tpi2 = time.time()
+                        t_policy_improvement += (tpi2 - tpi1)
+                        if (max_action_diff_pw < 1):
+                            break    
+                        if (max_value_relerror_pw < iteration_relerror_limit_singleplayer_policy):
+                            break
             
-            #### done optimize A and B iteratively
-            value_pw[tokens_pw,score_state_pw,score_state_ps] = 0.5*(value_pw_optW[tokens_pw, score_state_pw,score_state_ps]+value_pw_optS[tokens_pw, score_state_pw,score_state_ps])
-            value_ps[tokens_pw,score_state_pw,score_state_ps] = 0.5*(value_ps_optW[tokens_pw, score_state_pw,score_state_ps]+value_ps_optS[tokens_pw, score_state_pw,score_state_ps])
-            iteration_round_zsgtwoplayers[tokens_pw,score_state_pw,score_state_ps] = round_index_zsgtwoplayers + 1
-            #print('optimize A and B iteratively in time={} seconds'.format(time.time()-t_opt_twoplayers_begin))
-        
+                    optimal_action_index_dic_pw[score_state_pw][score_state_ps] = state_action_pw
+                    optimal_value_dic_pw[score_state_pw][score_state_ps] = state_value_pw
+                    prob_turn_transit_dic_pw[score_state_pw][score_state_ps] = prob_turn_transit_pw
+                    num_iteration_record_pw[tokens_pw,score_state_pw, score_state_ps] = round_index + 1
+                    #### done optimize player A
+                    
+                    ## check optimality
+                    value_pw_optW[tokens_pw, score_state_pw,score_state_ps] = value_pw[tokens_pw, score_state_pw,score_state_ps]
+                    value_ps_optW[tokens_pw, score_state_pw,score_state_ps] = value_ps[tokens_pw, score_state_pw,score_state_pw]
+                    max_zsgvalue_relerror = max([np.abs(value_pw_state_old-value_pw[tokens_pw, score_state_pw,score_state_ps]), np.abs(value_ps_state_old-value_ps[tokens_pw, score_state_pw,score_state_ps])])
+                    #print('A:max_zsgvalue_relerror={}'.format(max_zsgvalue_relerror))      
+                    if (max_zsgvalue_relerror < iteration_relerror_limit_zsgtwoplayers):
+                        break
+
+
+                    #### optimize B policy ####
+                    value_pw_state_old = value_pw[tokens_pw, score_state_pw,score_state_ps] ## starting value 0
+                    value_ps_state_old = value_ps[tokens_pw, score_state_pw,score_state_ps] ## starting value 0                
+                    for round_index in range(iteration_round_limit_singleplayer_policy):                    
+                        
+                        ## policy evaluation
+                        tpe1 = time.time()
+                        ## player A is fixed, only need to compute once
+                        if (round_index >=0):
+                            prob_turn_transit_ps = h.solve_turn_transit_probability_fast_token(score_state=score_state_ps,state_action=state_action_ps,available_tokens=0,prob_grid_normalscore_nt=prob_grid_normalscore_nt_ps,prob_grid_doublescore_nt=prob_grid_doublescore_nt_ps,prob_grid_bullscore_nt=prob_grid_bullscore_nt_ps,prob_bust_dic_nt=prob_bust_dic_nt_ps,prob_grid_normalscore_t=prob_grid_normalscore_t,prob_grid_doublescore_t=prob_grid_doublescore_t,prob_grid_bullscore_t=prob_grid_bullscore_t,prob_bust_dic_t=prob_bust_dic_t)
+                        [value_state_pw, value_state_ps] = win_probability_policy_evaluation_tokens(value_pw, value_ps, tokens_pw, score_state_pw, score_state_ps, prob_turn_transit_pw, prob_turn_transit_ps)
+                        value_pw[tokens_pw, score_state_pw, score_state_ps] = value_state_pw
+                        value_ps[tokens_pw, score_state_pw, score_state_ps] = value_state_ps
+                        tpe2 = time.time()
+                        t_policy_evaluation += (tpe2-tpe1) 
+
+                        #### policy improvement for player B ####
+                        tpi1 = time.time()
+                        param_ps['round_index'] = round_index
+                        [max_action_diff_ps, max_value_relerror_ps] = zsg_policy_improvement_tokens(param_ps)
+                        tpi2 = time.time()
+                        t_policy_improvement += (tpi2 - tpi1)
+                        if (max_action_diff_ps < 1):
+                            break    
+                        if (max_value_relerror_ps < iteration_relerror_limit_singleplayer_policy):
+                            break
+            
+                    optimal_action_index_dic_ps[score_state_pw][score_state_ps] = state_action_ps
+                    optimal_value_dic_ps[score_state_pw][score_state_ps] = state_value_ps
+                    prob_turn_transit_dic_ps[score_state_pw][score_state_ps] = prob_turn_transit_ps
+                    num_iteration_record_ps[tokens_pw, score_state_pw, score_state_ps] = round_index + 1
+                    #### done optimize player B
+            
+                    ## check optimality
+                    value_pw_optS[tokens_pw, score_state_pw,score_state_ps] = value_pw[tokens_pw, score_state_pw,score_state_ps]
+                    value_ps_optS[tokens_pw, score_state_pw,score_state_ps] = value_ps[tokens_pw, score_state_pw,score_state_ps]
+                    max_zsgvalue_relerror = max([np.abs(value_pw_state_old-value_pw[tokens_pw, score_state_pw,score_state_ps]), np.abs(value_ps_state_old-value_ps[tokens_pw, score_state_pw,score_state_ps])])
+                    #print('B:max_zsgvalue_relerror={}'.format(max_zsgvalue_relerror))
+                    if (max_zsgvalue_relerror < iteration_relerror_limit_zsgtwoplayers):
+                        break
+                
+                #### done optimize A and B iteratively
+                value_pw[tokens_pw,score_state_pw,score_state_ps] = 0.5*(value_pw_optW[tokens_pw, score_state_pw,score_state_ps]+value_pw_optS[tokens_pw, score_state_pw,score_state_ps])
+                value_ps[tokens_pw,score_state_pw,score_state_ps] = 0.5*(value_ps_optW[tokens_pw, score_state_pw,score_state_ps]+value_ps_optS[tokens_pw, score_state_pw,score_state_ps])
+                iteration_round_zsgtwoplayers[tokens_pw,score_state_pw,score_state_ps] = round_index_zsgtwoplayers + 1
+                #print('optimize A and B iteratively in time={} seconds'.format(time.time()-t_opt_twoplayers_begin))
+            
         #### finish a column        
         #if (score_state_pb%20==0 or score_state_pb==2):
         #    print('#### score_state_pb={}, time={}'.format(score_state_pb, time.time()-t_scoreloop_begin))
@@ -890,4 +981,5 @@ def solve_zsg_optboth(name_pw, name_ps, epsilon_pw, epsilon_ps, data_parameter_d
         return 'save'
     else:
         return result_dic
+
 
