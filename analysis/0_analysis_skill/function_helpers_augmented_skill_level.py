@@ -7,9 +7,9 @@ import numpy as np
 import scipy.io as sio
 from scipy.stats import multivariate_normal
 
-import os
-os.chdir("..")
-print(os.getcwd())
+# import os
+# os.chdir("..")
+# print(os.getcwd())
 
 import function_init_board as fb
 import function_tool as ft
@@ -53,7 +53,13 @@ def evaluate_score_probability(playerID_list,epsilon=1,f_density_grid_pixel_per_
         os.makedirs(result_dir)
     # player_parameter = sio.loadmat('./ALL_Model_Fits.mat')
     print(os.getcwd())
-    player_parameter = sio.loadmat('ALL_Model_Fits.mat')
+    player_parameter = sio.loadmat('./data_parameter/ALL_Model_Fits.mat')
+    avg_model_t20 = sio.loadmat('./data_parameter/AVG_Model_Fits/ModelFit_T20_fixmu.mat')
+    avg_model_t19 = sio.loadmat('./data_parameter/AVG_Model_Fits/ModelFit_T19_fixmu.mat')
+    avg_model_t18 = sio.loadmat('./data_parameter/AVG_Model_Fits/ModelFit_T18_fixmu.mat')
+    avg_model_t17 = sio.loadmat('./data_parameter/AVG_Model_Fits/ModelFit_T17_fixmu.mat')
+    avg_model_b50 = sio.loadmat('./data_parameter/AVG_Model_Fits/ModelFit_B50_fixmu.mat')
+    avg_model_AllDoubles = sio.loadmat('./data_parameter/AVG_Model_Fits/ModelFit_AllDoubles_fixmu.mat')
     
     ## 1mm-width grid of 341*341 aiming locations (a sqaure enclosing the circle dart board)
     [xindex, yindex, xgrid, ygrid, grid_num] = fb.get_1mm_grid()
@@ -136,42 +142,88 @@ def evaluate_score_probability(playerID_list,epsilon=1,f_density_grid_pixel_per_
         prob_grid_singlescore_inner = np.zeros((grid_num, grid_num, fb.singlescorelist_len))
         prob_grid_singlescore_outer = np.zeros((grid_num, grid_num, fb.singlescorelist_len))
         
-        #### conduct a numerical integration to evaluate the hitting probability for each score associated with the given aiming location
-        time1 = time.time()
-        for xi in xindex:
-            ##print(xi)
-            for yi in yindex:
-                ## select the proper Gaussian distribution according to the area to which the aiming location belongs
-                mu = [xgrid[xi], ygrid[yi]]
-                score, multiplier = fb.get_score_and_multiplier(mu)
-                if (score==60 and multiplier==3): ##triple 20
-                    covariance_matrix = player_parameter['ModelFit_T20'][0, player_index][2] * epsilon
-                elif (score==57 and multiplier==3): ##triple 19
-                    covariance_matrix = player_parameter['ModelFit_T19'][0, player_index][2] * epsilon
-                elif (score==54 and multiplier==3): ##triple 18
-                    covariance_matrix = player_parameter['ModelFit_T18'][0, player_index][2] * epsilon
-                elif (score==51 and multiplier==3): ##triple 17
-                    covariance_matrix = player_parameter['ModelFit_T17'][0, player_index][2] * epsilon
-                elif (score==50 and multiplier==2): ##double bull
-                    covariance_matrix = player_parameter['ModelFit_B50'][0, player_index][2] * epsilon
-                else:
-                    covariance_matrix = player_parameter['ModelFit_All_Doubles'][0, player_index][2] * epsilon
-                        
-                ## f_density_grid is the PDF of the fitted Gaussian distribution
-                rv = multivariate_normal(mu, covariance_matrix)
-                f_density_grid = rv.pdf(pos)
-            
-                ## check score and integrate density
-                for si in range(20):
-                    prob_grid_singlescore[xi,yi,si] = f_density_grid[singlescore_coordinate_dic[si]].sum()*f_density_constant
-                    prob_grid_doublescore[xi,yi,si] = f_density_grid[doublescore_coordinate_dic[si]].sum()*f_density_constant
-                    prob_grid_triplescore[xi,yi,si] = f_density_grid[triplescore_coordinate_dic[si]].sum()*f_density_constant
+        if playerID == 'AVG':
 
-                    prob_grid_singlescore_inner[xi,yi,si] = f_density_grid[singlescore_inner_coordinate_dic[si]].sum()*f_density_constant
-                    prob_grid_singlescore_outer[xi,yi,si] = f_density_grid[singlescore_outer_coordinate_dic[si]].sum()*f_density_constant
+            #### conduct a numerical integration to evaluate the hitting probability for each score associated with the given aiming location
+            time1 = time.time()
+            for xi in xindex:
+                ##print(xi)
+                for yi in yindex:
+                    ## select the proper Gaussian distribution according to the area to which the aiming location belongs
+                    mu = [xgrid[xi], ygrid[yi]]
+                    score, multiplier = fb.get_score_and_multiplier(mu)
+                    if (score==60 and multiplier==3): ##triple 20
+                        covariance_matrix = avg_model_t20['ModelFit_T20_fixmu'][0][0][2] * epsilon
+                    elif (score==57 and multiplier==3): ##triple 19
+                        covariance_matrix = avg_model_t19['ModelFit_T19_fixmu'][0][0][2] * epsilon
+                    elif (score==54 and multiplier==3): ##triple 18
+                        ccovariance_matrix = avg_model_t18['ModelFit_T18_fixmu'][0][0][2] * epsilon 
+                    elif (score==51 and multiplier==3): ##triple 17
+                        covariance_matrix = avg_model_t17['ModelFit_T17_fixmu'][0][0][2] * epsilon 
+                    elif (score==50 and multiplier==2): ##double bull
+                        covariance_matrix = avg_model_b50['ModelFit_B50_fixmu'][0][0][2] * epsilon 
+                    else:
+                        covariance_matrix = avg_model_AllDoubles['ModelFit_AllDoubles_fixmu'][0][0][2] * epsilon 
+                            
+                    ## f_density_grid is the PDF of the fitted Gaussian distribution
+                    rv = multivariate_normal(mu, covariance_matrix)
+                    f_density_grid = rv.pdf(pos)
+                
+                    ## check score and integrate density
+                    for si in range(20):
+                        prob_grid_singlescore[xi,yi,si] = f_density_grid[singlescore_coordinate_dic[si]].sum()*f_density_constant
+                        prob_grid_doublescore[xi,yi,si] = f_density_grid[doublescore_coordinate_dic[si]].sum()*f_density_constant
+                        prob_grid_triplescore[xi,yi,si] = f_density_grid[triplescore_coordinate_dic[si]].sum()*f_density_constant
 
-                prob_grid_bullscore[xi,yi,0] = f_density_grid[bullscore_coordinate_dic[0]].sum()*f_density_constant
-                prob_grid_bullscore[xi,yi,1] = f_density_grid[bullscore_coordinate_dic[1]].sum()*f_density_constant
+                        prob_grid_singlescore_inner[xi,yi,si] = f_density_grid[singlescore_inner_coordinate_dic[si]].sum()*f_density_constant
+                        prob_grid_singlescore_outer[xi,yi,si] = f_density_grid[singlescore_outer_coordinate_dic[si]].sum()*f_density_constant
+
+
+                    prob_grid_bullscore[xi,yi,0] = f_density_grid[bullscore_coordinate_dic[0]].sum()*f_density_constant
+                    prob_grid_bullscore[xi,yi,1] = f_density_grid[bullscore_coordinate_dic[1]].sum()*f_density_constant
+        
+        else: 
+
+            player_index = playerID - 1
+
+            #### conduct a numerical integration to evaluate the hitting probability for each score associated with the given aiming location
+            time1 = time.time()
+            for xi in xindex:
+                ##print(xi)
+                for yi in yindex:
+                    ## select the proper Gaussian distribution according to the area to which the aiming location belongs
+                    mu = [xgrid[xi], ygrid[yi]]
+                    score, multiplier = fb.get_score_and_multiplier(mu)
+                    if (score==60 and multiplier==3): ##triple 20
+                        covariance_matrix = player_parameter['ModelFit_T20'][0, player_index][2] * epsilon
+                    elif (score==57 and multiplier==3): ##triple 19
+                        covariance_matrix = player_parameter['ModelFit_T19'][0, player_index][2] * epsilon
+                    elif (score==54 and multiplier==3): ##triple 18
+                        covariance_matrix = player_parameter['ModelFit_T18'][0, player_index][2] * epsilon
+                    elif (score==51 and multiplier==3): ##triple 17
+                        covariance_matrix = player_parameter['ModelFit_T17'][0, player_index][2] * epsilon
+                    elif (score==50 and multiplier==2): ##double bull
+                        covariance_matrix = player_parameter['ModelFit_B50'][0, player_index][2] * epsilon
+                    else:
+                        covariance_matrix = player_parameter['ModelFit_All_Doubles'][0, player_index][2] * epsilon
+                            
+                    ## f_density_grid is the PDF of the fitted Gaussian distribution
+                    rv = multivariate_normal(mu, covariance_matrix)
+                    f_density_grid = rv.pdf(pos)
+                
+                    ## check score and integrate density
+                    for si in range(20):
+                        prob_grid_singlescore[xi,yi,si] = f_density_grid[singlescore_coordinate_dic[si]].sum()*f_density_constant
+                        prob_grid_doublescore[xi,yi,si] = f_density_grid[doublescore_coordinate_dic[si]].sum()*f_density_constant
+                        prob_grid_triplescore[xi,yi,si] = f_density_grid[triplescore_coordinate_dic[si]].sum()*f_density_constant
+
+                        prob_grid_singlescore_inner[xi,yi,si] = f_density_grid[singlescore_inner_coordinate_dic[si]].sum()*f_density_constant
+                        prob_grid_singlescore_outer[xi,yi,si] = f_density_grid[singlescore_outer_coordinate_dic[si]].sum()*f_density_constant
+
+
+                    prob_grid_bullscore[xi,yi,0] = f_density_grid[bullscore_coordinate_dic[0]].sum()*f_density_constant
+                    prob_grid_bullscore[xi,yi,1] = f_density_grid[bullscore_coordinate_dic[1]].sum()*f_density_constant
+                    
                 
         result_dic = {'prob_grid_singlescore':prob_grid_singlescore, 'prob_grid_doublescore':prob_grid_doublescore,'prob_grid_triplescore':prob_grid_triplescore, 'prob_grid_bullscore':prob_grid_bullscore,'prob_grid_singlescore_inner':prob_grid_singlescore_inner,'prob_grid_singlescore_outer':prob_grid_singlescore_outer}    
         time2 = time.time()

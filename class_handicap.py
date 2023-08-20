@@ -193,7 +193,7 @@ class Handicap:
 
                 v501_w = df_501_b0[df_501_b0.epsilon==self.epsilon_list[w]].optimal_value.values[0]
 
-                handicap_val = v501_s - v501_w
+                handicap_val = v501_w - v501_s
 
                 if handicap_val >= 0: 
                     sd_handicap_vals[self.epsilon_list[s]][self.epsilon_list[w]] = handicap_val
