@@ -49,7 +49,7 @@ Finally, the main repository contains several helper modules containing the core
 * `function_tool.py`: Contains helper function to assist with saving and loading .pkl files. These functions were taken from Haugh and Wang's original darts code. 
 
 
-Would like to thank Martin Haugh & Chun Wang for producing a very clean [codebase](https://github.com/wangchunsem/OptimalDarts) and sharing it publicly. Their original work was instrumental in producing this analysis. 
+Would like to thank Martin Haugh & Chun Wang for producing a very clean [codebase](https://github.com/wangchunsem/OptimalDarts) and sharing it publicly. Their original work was instrumental in enabling this handicapping analysis. 
 
 
 
