@@ -127,8 +127,6 @@ def evaluate_score_probability(playerID_list,epsilon=1,f_density_grid_pixel_per_
     ## 
     for playerID in playerID_list:
 
-        player_index = playerID - 1
-
         name_pa = 'player{}'.format(playerID)
         result_filename = result_dir + '/' + 'e{}_'.format(epsilon) + '{}_gaussin_prob_grid.pkl'.format(name_pa)
         print('\ncomputing {}'.format(result_filename))
