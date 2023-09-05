@@ -160,4 +160,6 @@ class Simulator :
 
         return simulation_paths
 
+    def get_transition_probs(self):
+        return self.transition_probs
         
